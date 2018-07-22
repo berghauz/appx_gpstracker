@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"net/http"
 	"os"
 	"os/signal"
@@ -14,9 +15,16 @@ import (
 var appxMessage = make(chan AppxMessage)
 var pool = new(connPool)
 
+var (
+	version    = "UNDEFINED"
+	buildstamp = "UNDEFINED"
+	githash    = "UNDEFINED"
+)
+
 func main() {
 
 	ctx := CreateContext(*confFile)
+	fmt.Printf("%s %s\nGIT Commit Hash: %s\nBuild Time: %s\n\n", ctx.AppName, version, githash, buildstamp)
 
 	interrupt := make(chan os.Signal)
 	sighup := make(chan os.Signal)
