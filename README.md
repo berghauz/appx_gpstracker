@@ -15,7 +15,7 @@ Generic LoRa application to consume TrackNet LNS events
 
 ## Config example
 ```yaml
-appname: gpstrack
+appname: gpstracker
 
 owner:
   id: "owner-1::"
