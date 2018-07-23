@@ -1,4 +1,4 @@
-# appx_gpstracker
+# appx_gpstracker (WIP)
 Generic LoRa application to consume TrackNet LNS events
 
 ## Features
