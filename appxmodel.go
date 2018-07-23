@@ -2,6 +2,8 @@ package main
 
 import (
 	"encoding/json"
+	"sync"
+	"time"
 
 	log "github.com/sirupsen/logrus"
 )
@@ -123,7 +125,7 @@ type UpInfoModel struct {
 	} `json:"upinfo"`
 }
 
-// fake is fake model as filter match helper
+// fake is a fake model, used as filtering match helper
 type fake struct {
 	MsgType string `json:"msgtype"`
 	DevEui  string `json:"DevEui"`
@@ -136,8 +138,62 @@ type AppxMessage struct {
 	Message []byte
 }
 
-// HandleNewMessage func
-func (ctx *Context) HandleNewMessage(msg <-chan AppxMessage) {
+// FilterMessage func
+func (ctx *Context) FilterMessage(message AppxMessage) bool {
+
+	f := fake{}
+	json.Unmarshal(message.Message, &f)
+	messagesRecievedByFilter.WithLabelValues(ctx.AppName, message.AppxID, message.AppxURL, f.MsgType).Inc()
+	for _, allowedType := range ctx.Filters.MsgType {
+		if f.MsgType == allowedType || allowedType == "*" {
+			for _, allowedDeveui := range ctx.CompilledFilters.ReExpressions {
+				if allowedDeveui.MatchString(f.DevEui) {
+					messagesPassedFilter.WithLabelValues(ctx.AppName, message.AppxID, message.AppxURL, f.MsgType).Inc()
+					logger.WithFields(log.Fields{"uri": message.AppxURL, "id": message.AppxID}).Debugf("%+v", message.Message)
+					return true
+				}
+				messagesDroppedByDeveui.WithLabelValues(ctx.AppName, message.AppxID, message.AppxURL, f.MsgType).Inc()
+			}
+		} else {
+			messagesDroppedByType.WithLabelValues(ctx.AppName, message.AppxID, message.AppxURL, f.MsgType).Inc()
+		}
+	}
+	return false
+}
+
+// QueueProcessing func
+func (ctx *Context) QueueProcessing(message <-chan AppxMessage, wg *sync.WaitGroup) {
+	var buf []AppxMessage
+	var timeout = time.Duration(ctx.Owner.QueueFlushTime) * time.Millisecond
+	flushTime := time.NewTicker(timeout)
+	for {
+		select {
+		case newMsg := <-message:
+			buf = append(buf, newMsg)
+			if len(buf) == ctx.Owner.QueueFlushCount {
+				ctx.dummysinc(buf)
+				buf = nil
+				break
+			}
+		case <-flushTime.C:
+			ctx.dummysinc(buf)
+			buf = nil
+			flushTime = time.NewTicker(timeout)
+			break
+		}
+	}
+}
+
+// dummysinc
+
+func (ctx *Context) dummysinc(batch []AppxMessage) {
+	for _, msg := range batch {
+		log.Infoln(msg.AppxID, msg.AppxURL, msg.Message)
+	}
+}
+
+/*
+func (ctx *Context) QueueProcessing(msg <-chan AppxMessage) {
 	for {
 		f := fake{}
 		newMsg := <-msg
@@ -147,7 +203,7 @@ func (ctx *Context) HandleNewMessage(msg <-chan AppxMessage) {
 
 		for _, allowedType := range ctx.Filters.MsgType {
 			if f.MsgType == allowedType || allowedType == "*" {
-				for _, allowedDeveui := range ctx.CompilledFilters.ReExpressions /*devEuiFilters.ReExpressions*/ {
+				for _, allowedDeveui := range ctx.CompilledFilters.ReExpressions {
 					if allowedDeveui.MatchString(f.DevEui) {
 						messagesPassedFilter.WithLabelValues(ctx.AppName, newMsg.AppxID, newMsg.AppxURL, f.MsgType).Inc()
 						logger.WithFields(log.Fields{"uri": newMsg.AppxURL, "id": newMsg.AppxID}).Debugf("%+v", newMsg.Message)
@@ -161,6 +217,7 @@ func (ctx *Context) HandleNewMessage(msg <-chan AppxMessage) {
 		}
 	}
 }
+*/
 
 /*
 	for _, allowedType := range ctx.Filters.MsgType {

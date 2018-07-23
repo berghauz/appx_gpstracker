@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -12,8 +13,7 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-var appxMessage = make(chan AppxMessage)
-var pool = new(connPool)
+var pool = newConnPool()
 
 var (
 	version    = "UNDEFINED"
@@ -21,10 +21,16 @@ var (
 	githash    = "UNDEFINED"
 )
 
+// gracefull shutdown helpers
+var wggs = sync.WaitGroup{}
+var shutdown = make(chan struct{})
+
 func main() {
 
 	ctx := CreateContext(*confFile)
 	fmt.Printf("%s %s\nGIT Commit Hash: %s\nBuild Time: %s\n\n", ctx.AppName, version, githash, buildstamp)
+
+	appxMessage := make(chan AppxMessage, ctx.Owner.QueueFlushCount*3)
 
 	interrupt := make(chan os.Signal)
 	sighup := make(chan os.Signal)
@@ -36,11 +42,15 @@ func main() {
 			case <-interrupt:
 				logger.Println("EXIT")
 				pool.CloseAll()
+				close(shutdown)
+				//wggs.Add(1)
+				wggs.Wait()
+				logger.Infoln("Horaaay...")
 				os.Exit(0)
 			case <-sighup:
-				logger.Println("Reloading filters...")
+				logger.Infoln("Reloading filters...")
 				ctx.ReloadFilters(*confFile)
-				logger.Println("Reloading filters done. New is %+v", ctx.Filters)
+				logger.Infof("Reloading filters done. New is %+v", ctx.Filters)
 			}
 		}
 	}()
@@ -57,15 +67,17 @@ func main() {
 			logger.WithFields(log.Fields{"uri": uri.URI, "crt": ctx.SSL.Certificate, "key": ctx.SSL.PublicKey}).Fatalf("Bootstrap connection loop %+v", err)
 		}
 
+		wggs.Add(1)
+
 		conn := connection{c, ctx, uri.URI, uri.Appxid, true, 0}
 		pool.Add(&conn)
 
-		go conn.ListenAppxNode()
-		go conn.keepAlive(time.Duration(*keepAlive) * time.Second)
-		logger.Printf("Listen on %s, appxid %v in boostrap loop", uri.URI, uri.Appxid)
+		go conn.ListenAppxNode(appxMessage)
+		go conn.keepAlive(time.Duration(*keepAlive)*time.Second, appxMessage)
+		logger.Infof("Listen on %s, appxid %v in boostrap loop", uri.URI, uri.Appxid)
 	}
 
-	go ctx.HandleNewMessage(appxMessage)
+	go ctx.QueueProcessing(appxMessage, &wggs)
 
 	// conn := ctx.WsConnect(ctx.Appxs.AppxList[0].URI)
 	// go ServeConnection(conn)

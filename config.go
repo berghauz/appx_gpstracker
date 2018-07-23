@@ -17,6 +17,8 @@ type Context struct {
 		ID               string   `yaml:"id,omitempty"`
 		AppxBootstrapURI string   `yaml:"appx_bootstrap_uri,omitempty"`
 		StoragePrefList  []string `yaml:"storage_pref_list,omitempty"`
+		QueueFlushCount  int      `yaml:"queue_flush_count,omitempty"`
+		QueueFlushTime   int64    `yaml:"queue_flush_time,omitempty"`
 	} `yaml:"owner,omitempty"`
 	SSL struct {
 		Certificate string `yaml:"certificate,omitempty"`

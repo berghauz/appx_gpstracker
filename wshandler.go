@@ -23,7 +23,7 @@ type connection struct {
 
 // connPool type
 type connPool struct {
-	connections []*connection
+	connections map[*connection]bool
 	mu          sync.Mutex
 }
 
@@ -59,7 +59,7 @@ func (ctx *Context) WsConnect(uri string) (*websocket.Conn, error) {
 	conn, _, err := dialer.Dial(uri, wsHeaders)
 	if err == nil {
 		//logger.WithFields(log.Fields{"uri": uri, "crt": ctx.SSL.Certificate, "key": ctx.SSL.PublicKey}).Fatalf("%+v", err)
-		logger.Infof("Connected to %s is success", uri)
+		logger.Infof("Connected to %s", uri)
 	}
 
 	return conn, err
@@ -94,7 +94,7 @@ func (ctx *Context) GetAppxs() {
 }
 
 // ListenAppxNode func
-func (conn *connection) ListenAppxNode() {
+func (conn *connection) ListenAppxNode(appxMessage chan<- AppxMessage) {
 	var err error
 	for {
 		var value []byte
@@ -110,10 +110,19 @@ func (conn *connection) ListenAppxNode() {
 			conn.msgRx++
 			rawMessagesRecieved.WithLabelValues(conn.ctx.AppName, conn.appxID, conn.appxURI).Inc()
 		}
+		// select {
+		// case <-shutdown:
+		// 	conn.ws.Close()
+		// 	logger.WithFields(log.Fields{"appx_id": conn.appxID, "appx_uri": conn.appxURI}).Info("Listener closed")
+		// 	wggs.Done()
+		// 	return
+		// default:
+		// 	break
+		// }
 	}
 }
 
-func (conn *connection) Respawn(timeout time.Duration) {
+func (conn *connection) Respawn(timeout time.Duration, appxMessage chan<- AppxMessage) {
 	var err error
 	logger.Warnf("Trying to reconnect to %s in %v", conn.appxURI, timeout)
 	ticker := time.NewTicker(timeout)
@@ -132,8 +141,8 @@ func (conn *connection) Respawn(timeout time.Duration) {
 				logger.Warnf("Cant't respawn connection %s %+v, trying again in %v", conn.appxURI, err, timeout)
 				//return
 			} else {
-				go conn.ListenAppxNode()
-				go conn.keepAlive(time.Duration(*keepAlive) * time.Second)
+				go conn.ListenAppxNode(appxMessage)
+				go conn.keepAlive(time.Duration(*keepAlive)*time.Second, appxMessage)
 				conn.alive = true
 				ticker.Stop()
 			}
@@ -141,7 +150,7 @@ func (conn *connection) Respawn(timeout time.Duration) {
 	}
 }
 
-func (conn *connection) keepAlive(timeout time.Duration) {
+func (conn *connection) keepAlive(timeout time.Duration, appxMessage chan<- AppxMessage) {
 	lastResponse := time.Now()
 	conn.ws.SetPongHandler(func(msg string) error {
 		lastResponse = time.Now()
@@ -158,7 +167,7 @@ func (conn *connection) keepAlive(timeout time.Duration) {
 			if time.Now().Sub(lastResponse) > timeout {
 				conn.alive = false
 				conn.ws.Close()
-				conn.Respawn(time.Duration(*respawnTimeout) * time.Second)
+				conn.Respawn(time.Duration(*respawnTimeout)*time.Second, appxMessage)
 				break
 			}
 		}
@@ -168,13 +177,14 @@ func (conn *connection) keepAlive(timeout time.Duration) {
 func (p *connPool) Add(conn *connection) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.connections = append(p.connections, conn)
+	//p.connections = append(p.connections, conn)
+	p.connections[conn] = true
 }
 
 func (p *connPool) CloseAll() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	for _, conn := range p.connections {
+	for conn := range p.connections {
 		logger.Infof("Appxid %s endpoint %s served %v messages", conn.appxID, conn.appxURI, conn.msgRx)
 		conn.ws.WriteMessage(websocket.CloseMessage, []byte{})
 		if err := conn.ws.Close(); err != nil {
@@ -182,5 +192,12 @@ func (p *connPool) CloseAll() {
 		} else {
 			logger.Infof("Closing %s", conn.appxURI)
 		}
+	}
+}
+
+// newConnPool func
+func newConnPool() *connPool {
+	return &connPool{
+		connections: make(map[*connection]bool),
 	}
 }
