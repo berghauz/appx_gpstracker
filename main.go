@@ -34,19 +34,24 @@ func main() {
 
 	interrupt := make(chan os.Signal)
 	sighup := make(chan os.Signal)
-	signal.Notify(interrupt, os.Interrupt, syscall.SIGTERM)
-	signal.Notify(sighup, os.Interrupt, syscall.SIGHUP)
+	signal.Notify(interrupt, syscall.SIGINT, syscall.SIGTERM)
+	signal.Notify(sighup, syscall.SIGHUP)
+
+	// it is not strict necessary spliting the interrupt and sughup events hadnling, but just in case...
+	go func() {
+		<-interrupt
+		logger.Infoln("Preparation of a graceful shutdown")
+		pool.CloseAll()
+		//close(shutdown)
+		//wggs.Add(1)
+		wggs.Wait()
+		logger.Infoln("Horaaay...")
+		os.Exit(0)
+	}()
+
 	go func() {
 		for {
 			select {
-			case <-interrupt:
-				logger.Println("EXIT")
-				pool.CloseAll()
-				close(shutdown)
-				//wggs.Add(1)
-				wggs.Wait()
-				logger.Infoln("Horaaay...")
-				os.Exit(0)
 			case <-sighup:
 				logger.Infoln("Reloading filters...")
 				ctx.ReloadFilters(*confFile)
@@ -69,7 +74,9 @@ func main() {
 
 		wggs.Add(1)
 
-		conn := connection{c, ctx, uri.URI, uri.Appxid, true, 0}
+		conn := connection{
+			c, ctx, uri.URI,
+			uri.Appxid, true, 0}
 		pool.Add(&conn)
 
 		go conn.ListenAppxNode(appxMessage)

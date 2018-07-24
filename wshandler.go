@@ -96,29 +96,23 @@ func (ctx *Context) GetAppxs() {
 // ListenAppxNode func
 func (conn *connection) ListenAppxNode(appxMessage chan<- AppxMessage) {
 	var err error
+	defer func() {
+		logger.WithFields(log.Fields{"appx_id": conn.appxID, "appx_uri": conn.appxURI}).Info("Disconnected")
+		wggs.Done()
+	}()
 	for {
 		var value []byte
 		var appxMsg = AppxMessage{conn.appxURI, conn.appxID, value}
 		if conn.alive {
 			_, appxMsg.Message, err = conn.ws.ReadMessage()
 			if err != nil {
-				logger.Warnf("ListenAppxNode %s %v.", conn.appxURI, err)
 				conn.alive = false
-				break
+				return
 			}
 			appxMessage <- appxMsg
 			conn.msgRx++
 			rawMessagesRecieved.WithLabelValues(conn.ctx.AppName, conn.appxID, conn.appxURI).Inc()
 		}
-		// select {
-		// case <-shutdown:
-		// 	conn.ws.Close()
-		// 	logger.WithFields(log.Fields{"appx_id": conn.appxID, "appx_uri": conn.appxURI}).Info("Listener closed")
-		// 	wggs.Done()
-		// 	return
-		// default:
-		// 	break
-		// }
 	}
 }
 
@@ -126,7 +120,7 @@ func (conn *connection) Respawn(timeout time.Duration, appxMessage chan<- AppxMe
 	var err error
 	logger.Warnf("Trying to reconnect to %s in %v", conn.appxURI, timeout)
 	ticker := time.NewTicker(timeout)
-	//defer ticker.Stop()
+	defer ticker.Stop()
 
 	for {
 
@@ -139,12 +133,12 @@ func (conn *connection) Respawn(timeout time.Duration, appxMessage chan<- AppxMe
 			conn.ws, err = conn.ctx.WsConnect(conn.appxURI)
 			if err != nil {
 				logger.Warnf("Cant't respawn connection %s %+v, trying again in %v", conn.appxURI, err, timeout)
-				//return
 			} else {
 				go conn.ListenAppxNode(appxMessage)
 				go conn.keepAlive(time.Duration(*keepAlive)*time.Second, appxMessage)
 				conn.alive = true
-				ticker.Stop()
+				//ticker.Stop()
+				return
 			}
 		}
 	}
@@ -185,13 +179,14 @@ func (p *connPool) CloseAll() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	for conn := range p.connections {
-		logger.Infof("Appxid %s endpoint %s served %v messages", conn.appxID, conn.appxURI, conn.msgRx)
+		//logger.Infof("Appxid %s endpoint %s served %v messages", conn.appxID, conn.appxURI, conn.msgRx)
 		conn.ws.WriteMessage(websocket.CloseMessage, []byte{})
 		if err := conn.ws.Close(); err != nil {
-			logger.Warningf("Error closing %s %+v", conn.appxURI, err)
-		} else {
-			logger.Infof("Closing %s", conn.appxURI)
+			logger.Warningf("CloseAll error closing %s %+v", conn.appxURI, err)
 		}
+		//else {
+		// 	logger.Infof("Closing %s", conn.appxURI)
+		// }
 	}
 }
 

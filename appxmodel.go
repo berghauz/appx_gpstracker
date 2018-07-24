@@ -187,8 +187,8 @@ func (ctx *Context) QueueProcessing(message <-chan AppxMessage, wg *sync.WaitGro
 // dummysinc
 
 func (ctx *Context) dummysinc(batch []AppxMessage) {
-	for _, msg := range batch {
-		log.Infoln(msg.AppxID, msg.AppxURL, msg.Message)
+	for idx, msg := range batch {
+		log.Infof("%v, %v=>%v <%+v>", idx, msg.AppxID, msg.AppxURL, msg.Message)
 	}
 }
 
