@@ -24,7 +24,7 @@ type connection struct {
 // connPool type
 type connPool struct {
 	connections map[*connection]bool
-	mu          sync.Mutex
+	mu          *sync.Mutex
 }
 
 // WsConnect func
@@ -67,10 +67,6 @@ func (ctx *Context) WsConnect(uri string) (*websocket.Conn, error) {
 
 // GetAppxs func
 func (ctx *Context) GetAppxs() {
-
-	type invite struct {
-		Owner string `json:"owner"`
-	}
 
 	conn, err := ctx.WsConnect(ctx.Owner.AppxBootstrapURI)
 	if err != nil {
@@ -134,10 +130,12 @@ func (conn *connection) Respawn(timeout time.Duration, appxMessage chan<- AppxMe
 			if err != nil {
 				logger.Warnf("Cant't respawn connection %s %+v, trying again in %v", conn.appxURI, err, timeout)
 			} else {
+				conn.alive = true
+				pool.Add(conn)
+				wggs.Add(1)
+				ticker.Stop()
 				go conn.ListenAppxNode(appxMessage)
 				go conn.keepAlive(time.Duration(*keepAlive)*time.Second, appxMessage)
-				conn.alive = true
-				//ticker.Stop()
 				return
 			}
 		}
@@ -161,6 +159,7 @@ func (conn *connection) keepAlive(timeout time.Duration, appxMessage chan<- Appx
 			if time.Now().Sub(lastResponse) > timeout {
 				conn.alive = false
 				conn.ws.Close()
+				pool.Delete(conn)
 				conn.Respawn(time.Duration(*respawnTimeout)*time.Second, appxMessage)
 				break
 			}
@@ -171,22 +170,25 @@ func (conn *connection) keepAlive(timeout time.Duration, appxMessage chan<- Appx
 func (p *connPool) Add(conn *connection) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	//p.connections = append(p.connections, conn)
 	p.connections[conn] = true
+	logger.Infof("Added %+v to connections pool", conn.appxURI)
+}
+
+func (p *connPool) Delete(conn *connection) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	delete(p.connections, conn)
+	logger.Infof("Deleted %+v from connections pool", conn.appxURI)
 }
 
 func (p *connPool) CloseAll() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	for conn := range p.connections {
-		//logger.Infof("Appxid %s endpoint %s served %v messages", conn.appxID, conn.appxURI, conn.msgRx)
 		conn.ws.WriteMessage(websocket.CloseMessage, []byte{})
 		if err := conn.ws.Close(); err != nil {
 			logger.Warningf("CloseAll error closing %s %+v", conn.appxURI, err)
 		}
-		//else {
-		// 	logger.Infof("Closing %s", conn.appxURI)
-		// }
 	}
 }
 
@@ -194,5 +196,6 @@ func (p *connPool) CloseAll() {
 func newConnPool() *connPool {
 	return &connPool{
 		connections: make(map[*connection]bool),
+		mu:          new(sync.Mutex),
 	}
 }
