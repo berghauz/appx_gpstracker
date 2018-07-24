@@ -126,10 +126,10 @@ type UpInfoModel struct {
 }
 
 // fake is a fake model, used as filtering match helper
-type fake struct {
-	MsgType string `json:"msgtype"`
-	DevEui  string `json:"DevEui"`
-}
+// type fake struct {
+// 	MsgType string `json:"msgtype"`
+// 	DevEui  string `json:"DevEui"`
+// }
 
 // AppxMessage type
 type AppxMessage struct {
@@ -140,22 +140,22 @@ type AppxMessage struct {
 
 // FilterMessage func
 func (ctx *Context) FilterMessage(message AppxMessage) bool {
-
-	f := fake{}
-	json.Unmarshal(message.Message, &f)
-	messagesRecievedByFilter.WithLabelValues(ctx.AppName, message.AppxID, message.AppxURL, f.MsgType).Inc()
+	var fake map[string]interface{}
+	//f := fake{}
+	json.Unmarshal(message.Message, &fake)
+	messagesRecievedByFilter.WithLabelValues(ctx.AppName, message.AppxID, message.AppxURL /*f.MsgType*/, fake["msgtype"].(string)).Inc()
 	for _, allowedType := range ctx.Filters.MsgType {
-		if f.MsgType == allowedType || allowedType == "*" {
+		if /*f.MsgType*/ fake["msgtype"].(string) == allowedType || allowedType == "*" {
 			for _, allowedDeveui := range ctx.CompilledFilters.ReExpressions {
-				if allowedDeveui.MatchString(f.DevEui) {
-					messagesPassedFilter.WithLabelValues(ctx.AppName, message.AppxID, message.AppxURL, f.MsgType).Inc()
-					logger.WithFields(log.Fields{"uri": message.AppxURL, "id": message.AppxID}).Debugf("%+v", message.Message)
+				if allowedDeveui.MatchString( /*f.DevEui*/ fake["DevEui"].(string)) {
+					messagesPassedFilter.WithLabelValues(ctx.AppName, message.AppxID, message.AppxURL /*f.MsgType*/, fake["msgtype"].(string)).Inc()
+					//logger.WithFields(log.Fields{"uri": message.AppxURL, "id": message.AppxID}).Debugf("%+v", message.Message)
 					return true
 				}
-				messagesDroppedByDeveui.WithLabelValues(ctx.AppName, message.AppxID, message.AppxURL, f.MsgType).Inc()
+				messagesDroppedByDeveui.WithLabelValues(ctx.AppName, message.AppxID, message.AppxURL /*f.MsgType*/, fake["msgtype"].(string)).Inc()
 			}
 		} else {
-			messagesDroppedByType.WithLabelValues(ctx.AppName, message.AppxID, message.AppxURL, f.MsgType).Inc()
+			messagesDroppedByType.WithLabelValues(ctx.AppName, message.AppxID, message.AppxURL /*f.MsgType*/, fake["msgtype"].(string)).Inc()
 		}
 	}
 	return false
@@ -171,12 +171,12 @@ func (ctx *Context) QueueProcessing(message <-chan AppxMessage, wg *sync.WaitGro
 		case newMsg := <-message:
 			buf = append(buf, newMsg)
 			if len(buf) == ctx.Owner.QueueFlushCount {
-				ctx.dummysinc(buf)
+				ctx.dummysink(buf)
 				buf = nil
 				break
 			}
 		case <-flushTime.C:
-			ctx.dummysinc(buf)
+			ctx.dummysink(buf)
 			buf = nil
 			flushTime = time.NewTicker(timeout)
 			break
@@ -186,9 +186,13 @@ func (ctx *Context) QueueProcessing(message <-chan AppxMessage, wg *sync.WaitGro
 
 // dummysinc
 
-func (ctx *Context) dummysinc(batch []AppxMessage) {
+func (ctx *Context) dummysink(batch []AppxMessage) {
+	var event interface{}
 	for idx, msg := range batch {
-		log.Infof("%v, %v=>%v <%+v>", idx, msg.AppxID, msg.AppxURL, msg.Message)
+		if ok := ctx.FilterMessage(msg); ok {
+			json.Unmarshal(msg.Message, &event)
+			log.Infof("%v, %v=>%v <%+v>", idx, msg.AppxID, msg.AppxURL, event)
+		}
 	}
 }
 
