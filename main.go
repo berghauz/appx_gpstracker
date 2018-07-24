@@ -42,8 +42,7 @@ func main() {
 		<-interrupt
 		logger.Infoln("Preparation of a graceful shutdown")
 		pool.CloseAll()
-		//close(shutdown)
-		//wggs.Add(1)
+		close(shutdown)
 		wggs.Wait()
 		logger.Infoln("Horaaay...")
 		os.Exit(0)

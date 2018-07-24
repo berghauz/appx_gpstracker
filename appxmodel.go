@@ -164,8 +164,9 @@ func (ctx *Context) FilterMessage(message AppxMessage) bool {
 // QueueProcessing func
 func (ctx *Context) QueueProcessing(message <-chan AppxMessage, wg *sync.WaitGroup) {
 	var buf []AppxMessage
+	wggs.Add(1)
 	var timeout = time.Duration(ctx.Owner.QueueFlushTime) * time.Millisecond
-	flushTime := time.NewTicker(timeout)
+	flushTicker := time.NewTicker(timeout)
 	for {
 		select {
 		case newMsg := <-message:
@@ -175,11 +176,18 @@ func (ctx *Context) QueueProcessing(message <-chan AppxMessage, wg *sync.WaitGro
 				buf = nil
 				break
 			}
-		case <-flushTime.C:
+		case <-flushTicker.C:
 			ctx.dummysink(buf)
 			buf = nil
-			flushTime = time.NewTicker(timeout)
+			flushTicker = time.NewTicker(timeout)
 			break
+		case <-shutdown:
+			ctx.dummysink(buf)
+			logger.Infof("QueueProcessing is terminating, flushing %v messages by final batch", len(buf))
+			buf = nil
+			flushTicker.Stop()
+			wggs.Done()
+			return
 		}
 	}
 }
