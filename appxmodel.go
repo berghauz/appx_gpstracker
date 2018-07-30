@@ -6,6 +6,7 @@ import (
 	"time"
 
 	log "github.com/sirupsen/logrus"
+	re "gopkg.in/gorethink/gorethink.v4"
 )
 
 /*
@@ -37,8 +38,9 @@ UPID 		INT8 and unique message number per service end point
 }
 */
 
-// DNDFModel type
-type DNDFModel struct {
+// DnDfTracknet type
+// Submits a downstream message for transmission within the next downlink window for a given device.
+type DnDfTracknet struct {
 	MsgType    string `json:"msgtype"`
 	MsgID      int64  `json:"MsgId"`
 	FPort      uint8  `json:"FPort"`
@@ -62,18 +64,44 @@ type DNDFModel struct {
 }
 */
 
-// UPDFModel type
-type UPDFModel struct {
-	MsgType    string `json:"msgtype"`
-	DevEui     string `json:"DevEui"`
-	UPID       int64  `json:"upid"`
-	SessID     int32  `json:"SessID"`
-	FCntUp     uint32 `json:"FCntUp"`
-	FPort      uint8  `json:"FPort"`
-	FRMPayload string `json:"FRMPayload"`
-	DR         int64  `json:"DR"`
-	Freq       int64  `json:"Freq"`
-	Region     string `json:"region"`
+/*
+
+"AFCntDown": 253 ,
+"AppSKeyEnv": null ,
+"ArrTime": 1532602005.487868 ,
++"DR": 5 ,
+"DevAddr": 13782224 ,
++"DevEui":  "64-7F-DA-00-00-00-07-85" ,
++"FCntUp": 5174 ,
++"FPort": 10 ,
++"FRMPayload":  "018808814905BF1400629800FF0152" ,
++"Freq": 868300000 ,
++"SessID": 169696865413625 ,
+"ciphered": false ,
+"confirm": false ,
+"dClass":  "A" ,
++"msgtype":  "updf" ,
++"region":  "EU863" ,
+"regionid": 1 ,
++"upid": 49373205491740460
+
+*/
+
+// UpDfTracknet type
+// Reports an upstream message with its up data frame payload as transmitted by a given device and additional context information. This message is
+// forwarded without delay and, if a given up data frame is received by multiple gateways, only the first copy received is forwarded.
+type UpDfTracknet struct {
+	MsgType    string    `json:"msgtype"`
+	DevEui     string    `json:"DevEui"`
+	UPID       int64     `json:"upid"`
+	SessID     int32     `json:"SessID"`
+	FCntUp     uint32    `json:"FCntUp"`
+	FPort      uint8     `json:"FPort"`
+	FRMPayload string    `json:"FRMPayload"`
+	DR         int64     `json:"DR"`
+	Freq       int64     `json:"Freq"`
+	Region     string    `json:"region"`
+	ArrTime    time.Time `json:"ArrTime"`
 }
 
 /*
@@ -108,21 +136,99 @@ UOBJ = {
 }
 */
 
-// UpInfoModel type
-type UpInfoModel struct {
-	UPDFModel
-	UpInfo struct {
-		RouterID int64   `json:"routerid"`
-		MuxID    int64   `json:"muxid"`
-		RSSI     float64 `json:"rssi"`
-		SNR      float64 `json:"snr"`
-		ArrTime  float64 `json:"ArrTime"`
-		Xtime    float64 `json:"xtime"`    // expected type
-		RxDelay  int64   `json:"RxDelay"`  // expected type
-		RX1DRoff int64   `json:"RX1DRoff"` // expected type
-		DoorID   int64   `json:"doorid"`   // expected type
-		RxTime   float64 `json:"rxtime"`   // expected type
+// UpInfoTracknet type
+// Reports additional context information about an up data frame as received from a given device. This information usually arrives a short time after a
+// corresponding updf message because forwarding is delayed to take into account context information from potentially multiple routers for the same
+// up data frame.
+//
+//An upinfo can be linked to its corresponding updf message via the SessID and FCntUp fields. Note: The value of upid is unique for each
+//updf and upinfo messages and therefore does NOT link the upinfo message to a updf message.
+type UpInfoTracknet struct {
+	UpDfTracknet
+	Upinfo []UpInfoElement `json:"upinfo"`
+}
+
+// UpInfoElement type element of UpInfo
+type UpInfoElement struct {
+	RouterID int64   `json:"routerid"`
+	MuxID    int64   `json:"muxid"`
+	RSSI     float64 `json:"rssi"`
+	SNR      float64 `json:"snr"`
+	ArrTime  float64 `json:"ArrTime"`
+	Xtime    float64 `json:"xtime"`    // expected type
+	RxDelay  int64   `json:"RxDelay"`  // expected type
+	RX1DRoff int64   `json:"RX1DRoff"` // expected type
+	DoorID   int64   `json:"doorid"`   // expected type
+	RxTime   float64 `json:"rxtime"`   // expected type
+}
+
+/*
+{
+	"msgtype": 	"dntxed"
+	"MsgId": 	INT8
+	"upinfo": {
+		"routerid": INT8 // identifier of the router which sent the down frame
+	}
+	"confirm": 	bool // confirmed down data frame?
+	"DevEUI": 	EUI64 // device EUI-64
+}
+*/
+
+// DnTxedTracknet type
+// Reports successful transmission of a down data frame. The MsgId field links the dntxed message to the corresponding dndf message.
+// Note that for confirmed down data frames every retransmission is reported separately until eventually acknowledged by the device, or until the
+// buffered downstream message is deleted or replaced by the application.
+type DnTxedTracknet struct {
+	MsgType string `json:"msgtype"`
+	MsgID   int64  `json:"MsgId"`
+	UpInfo  struct {
+		RouterID int64 `json:"routerid"`
 	} `json:"upinfo"`
+	Confirm bool   `json:"confirm"`
+	DevEui  string `json:"DevEui"`
+}
+
+/*
+{
+	"msgtype": 	"dnacked"
+	"MsgId": 	INT8
+}
+*/
+
+// DnAckedTracknet type
+// Reports acknowledgement of reception of a given down data frame by the device. The downstream message must have requested a confirmed down
+// data frame.
+// Note that for confirmed down data frames every retransmission is reported separately until eventually acknowledged by the device, or until the
+// buffered downstream message is deleted or replaced by the application.
+type DnAckedTracknet struct {
+	MsgType string `json:"msgtype"`
+	MsgID   int64  `json:"MsgId"`
+}
+
+/*
+{
+	"msgtype": 	"joining"
+	"SessID": 	UINT4 			// unique session identifier per device
+	"NetID": 	UINT4 			// LoRaWAN network identifier
+	"DevEui": 	EUI64 			// device identifier
+	"DR": 		int 			// data rate the message was sent with
+	"Freq":		int 			// frequency the message was sent with
+	"region":	str 			// region specifier
+	"upinfo": 	[ UOBJ, .. ]	// see `updf` for details
+}
+*/
+
+//JoiningTracknet type
+// A joining message signals that a device, identified by the DevEui, initiated an over-the-air activation (OTAA) to the network.
+type JoiningTracknet struct {
+	MsgType string          `json:"msgtype"`
+	SessID  int32           `json:"SessID"`
+	NetID   int32           `json:"NetID"`
+	DevEui  string          `json:"DevEui"`
+	DR      int64           `json:"DR"`
+	Freq    int64           `json:"Freq"`
+	Region  string          `json:"region"`
+	Upinfo  []UpInfoElement `json:"upinfo"`
 }
 
 // fake is a fake model, used as filtering match helper
@@ -172,17 +278,17 @@ func (ctx *Context) QueueProcessing(message <-chan AppxMessage, wg *sync.WaitGro
 		case newMsg := <-message:
 			buf = append(buf, newMsg)
 			if len(buf) == ctx.Owner.QueueFlushCount {
-				ctx.dummysink(buf)
+				ctx.rethinkSink(buf)
 				buf = nil
 				break
 			}
 		case <-flushTicker.C:
-			ctx.dummysink(buf)
+			ctx.rethinkSink(buf)
 			buf = nil
 			flushTicker = time.NewTicker(timeout)
 			break
 		case <-shutdown:
-			ctx.dummysink(buf)
+			ctx.rethinkSink(buf)
 			logger.Infof("QueueProcessing is terminating, flushing %v messages by final batch", len(buf))
 			buf = nil
 			flushTicker.Stop()
@@ -192,8 +298,7 @@ func (ctx *Context) QueueProcessing(message <-chan AppxMessage, wg *sync.WaitGro
 	}
 }
 
-// dummysinc
-
+// dummysink
 func (ctx *Context) dummysink(batch []AppxMessage) {
 	var event interface{}
 	for idx, msg := range batch {
@@ -202,6 +307,68 @@ func (ctx *Context) dummysink(batch []AppxMessage) {
 			log.Infof("%v, %v=>%v <%+v>", idx, msg.AppxID, msg.AppxURL, event)
 		}
 	}
+}
+
+// rethinkSink
+/*
+func (ctx *Context) rethinkSink(queue []AppxMessage) {
+	var event interface{}
+	var batch []interface{}
+	r := re.DB("lora").Table("gpstracker")
+	for idx, msg := range queue {
+		if ok := ctx.FilterMessage(msg); ok {
+			json.Unmarshal(msg.Message, &event)
+			batch = append(batch, event)
+			log.Infof("%v, %v=>%v <%+v>", idx, msg.AppxID, msg.AppxURL, event)
+		}
+	}
+	_, err := r.Insert(batch).RunWrite(ctx.reSession)
+	if err != nil {
+		log.Warn("error insert to db")
+	}
+}
+*/
+
+func (ctx *Context) rethinkSink(queue []AppxMessage) {
+	//var test UpDfTracknet
+	var batch []interface{}
+	r := re.DB("lora").Table("gpstracker")
+	for idx, msg := range queue {
+		var event map[string]interface{}
+		if ok := ctx.FilterMessage(msg); ok {
+			json.Unmarshal(msg.Message, &event)
+			log.Debugf("%v, %v=>%v <%+v>", idx, msg.AppxID, msg.AppxURL, event)
+			if _, ok := event["ArrTime"]; ok {
+				event["ArrTime"] = time.Unix(int64(event["ArrTime"].(float64)), 0)
+			} else {
+				event["ArrTime"] = time.Now()
+				event["TimeMissing"] = true
+			}
+			event["DCDPayload"] = ctx.DecodePayload(event["DevEui"].(string), event["FRMPayload"].(string))
+			batch = append(batch, event)
+		}
+	}
+	_, err := r.Insert(batch).RunWrite(ctx.reSession)
+	if err != nil {
+		log.Warn("error insert to db")
+	}
+}
+
+// DecodePayload func
+func (ctx *Context) DecodePayload(deveui string, payload string) interface{} {
+	if devType, ok := ctx.Inventory[deveui]; ok {
+		switch devType {
+		case "TN-T0004001":
+			payload, err := DecodeTNGps(payload)
+			if err != nil {
+				logger.WithFields(log.Fields{"DevEui": deveui, "type": devType, "payload": payload}).Errorf("Error decoding %+v", err)
+			}
+			return payload
+		default:
+			return nil
+		}
+	}
+	return nil
 }
 
 /*

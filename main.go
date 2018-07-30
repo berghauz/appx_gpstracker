@@ -37,13 +37,14 @@ func main() {
 	signal.Notify(interrupt, syscall.SIGINT, syscall.SIGTERM)
 	signal.Notify(sighup, syscall.SIGHUP)
 
-	// it is not strict necessary spliting the interrupt and sughup events hadnling, but just in case...
+	// it is not strict necessary spliting the interrupt and sighup events hadnling, but just in case...
 	go func() {
 		<-interrupt
 		logger.Infoln("Preparation of a graceful shutdown")
 		pool.CloseAll()
 		close(shutdown)
 		wggs.Wait()
+		ctx.reSession.Close()
 		logger.Infoln("Horaaay...")
 		os.Exit(0)
 	}()

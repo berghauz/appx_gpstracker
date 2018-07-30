@@ -51,5 +51,5 @@ var messagesStoredByType = prometheus.NewCounterVec(
 )
 
 func init() {
-	//prometheus.MustRegister(rawMessagesRecieved, messagesRecievedByFilter, messagesDroppedByType, messagesDroppedByDeveui, messagesStoredByType, messagesPassedFilter)
+	prometheus.MustRegister(rawMessagesRecieved, messagesRecievedByFilter, messagesDroppedByType, messagesDroppedByDeveui, messagesStoredByType, messagesPassedFilter)
 }
