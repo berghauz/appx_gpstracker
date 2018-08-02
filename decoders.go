@@ -66,7 +66,12 @@ func DecodeTNGps(payload string) (interface{}, error) {
 					lati := threeByteToInt64(tmp[:3])
 					loni := threeByteToInt64(tmp[3:6])
 					alti := threeByteToInt64(tmp[6:9])
-					decoded["gps"] = []float64{float64(lati) * 0.0001, float64(loni) * 0.0001, float64(alti) * 0.01}
+					//decoded["gps"] = []float64{float64(lati) * 0.0001, float64(loni) * 0.0001, float64(alti) * 0.01}
+					decoded["gps"] = map[string]interface{}{
+						"$reql_type$": "GEOMETRY",
+						"coordinates": []float64{float64(lati) * 0.0001, float64(loni) * 0.0001},
+						"type":        "Point",
+					}
 					logger.Printf("===gps %f, %f, %f", float64(lati)*0.0001, float64(loni)*0.0001, float64(alti)*0.01)
 				}
 				offset += val.Next
