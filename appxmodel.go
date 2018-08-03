@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"sync"
 	"time"
 
@@ -150,16 +151,19 @@ type UpInfoTracknet struct {
 
 // UpInfoElement type element of UpInfo
 type UpInfoElement struct {
-	RouterID int64   `json:"routerid"`
-	MuxID    int64   `json:"muxid"`
-	RSSI     float64 `json:"rssi"`
-	SNR      float64 `json:"snr"`
-	ArrTime  float64 `json:"ArrTime"`
-	Xtime    float64 `json:"xtime"`    // expected type
-	RxDelay  int64   `json:"RxDelay"`  // expected type
-	RX1DRoff int64   `json:"RX1DRoff"` // expected type
-	DoorID   int64   `json:"doorid"`   // expected type
-	RxTime   float64 `json:"rxtime"`   // expected type
+	ArrTime     float64 `json:"ArrTime" gorethink:"ArrTime"`
+	RX1DRoff    int64   `json:"RX1DRoff" gorethink:"RX1DRoff"` // expected type
+	RxDelay     int64   `json:"RxDelay" gorethink:"RxDelay"`   // expected type
+	DoorID      int64   `json:"doorid" gorethink:"doorid"`     // expected type
+	MuxID       int64   `json:"muxid" gorethink:"muxid"`
+	RegionID    int64   `json:"regionid" gorethink:"regionid"` // expected type
+	RouterID    int64   `json:"routerid" gorethink:"routerid"`
+	RouterIDStr string  `json:"routerid_str" gorethink:"routerid_str"`
+	RSSI        float64 `json:"rssi" gorethink:"rssi"`
+	RTT         []int16 `json:"rtt" gorethink:"rtt"`
+	RxTime      float64 `json:"rxtime" gorethink:"rxtime"` // expected type
+	SNR         float64 `json:"snr" gorethink:"snr"`
+	Xtime       float64 `json:"xtime" gorethink:"xtime"` // expected type
 }
 
 /*
@@ -331,6 +335,7 @@ func (ctx *Context) rethinkSink(queue []AppxMessage) {
 
 func (ctx *Context) rethinkSink(queue []AppxMessage) {
 	//var test UpDfTracknet
+	var upinfos []UpInfoElement
 	var batch []interface{}
 	r := re.DB("lora").Table("gpstracker")
 	for idx, msg := range queue {
@@ -345,6 +350,24 @@ func (ctx *Context) rethinkSink(queue []AppxMessage) {
 				event["TimeMissing"] = true
 			}
 			event["DCDPayload"] = ctx.DecodePayload(event["DevEui"].(string), event["FRMPayload"].(string))
+			// ugly tracknet/rethinkdb/nodejs biginteger fix
+			if _, ok := event["upinfo"]; ok {
+				for _, upinfo := range event["upinfo"].([]interface{}) {
+					tmpb, err := json.Marshal(upinfo)
+					if err != nil {
+						logger.Panic(err)
+					}
+
+					var tmp UpInfoElement
+					err = json.Unmarshal(tmpb, &tmp)
+					if err != nil {
+						logger.Panic(err)
+					}
+					tmp.RouterIDStr = fmt.Sprint(tmp.RouterID)
+					upinfos = append(upinfos, tmp)
+				}
+				event["upinfo"] = upinfos
+			}
 			batch = append(batch, event)
 		}
 	}
