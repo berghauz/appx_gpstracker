@@ -55,10 +55,10 @@ func DecodeTNGps(payload string) (interface{}, error) {
 					bits := binary.BigEndian.Uint16(tmp)
 					sign := bits&1 != 0
 					if sign {
-						decoded["battery"] = float64(bits) * -0.01
+						//decoded["battery"] = float64(bits) * -0.01
 						logger.Printf("===battery %f", float64(bits)*-0.01)
 					} else {
-						decoded["battery"] = float64(bits) * 0.01
+						//decoded["battery"] = float64(bits) * 0.01
 						logger.Printf("===battery %f", float64(bits)*0.01)
 					}
 				case "gps":

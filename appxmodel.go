@@ -342,7 +342,7 @@ func (ctx *Context) rethinkSink(queue []AppxMessage) {
 		var event map[string]interface{}
 		if ok := ctx.FilterMessage(msg); ok {
 			json.Unmarshal(msg.Message, &event)
-			log.Debugf("%v, %v=>%v <%+v>", idx, msg.AppxID, msg.AppxURL, event)
+			logger.Debugf("%v, %v=>%v <%+v>", idx, msg.AppxID, msg.AppxURL, event)
 			if _, ok := event["ArrTime"]; ok {
 				event["ArrTime"] = time.Unix(int64(event["ArrTime"].(float64)), 0)
 			} else {
@@ -365,6 +365,7 @@ func (ctx *Context) rethinkSink(queue []AppxMessage) {
 					}
 					tmp.RouterIDStr = fmt.Sprint(tmp.RouterID)
 					upinfos = append(upinfos, tmp)
+					logger.Debugf("rid-int: %d, rid-str: %s, rssi: %+v", tmp.RouterID, tmp.RouterIDStr, tmp.RSSI)
 				}
 				event["upinfo"] = upinfos
 			}
