@@ -248,6 +248,16 @@ type AppxMessage struct {
 	Message []byte
 }
 
+// var TCIOMessages = map[string]TCIOMessage{"dndf": &DnDfTracknet{}}
+
+// type TCIOMessage interface {
+// 	Unmarshal(tcMsgType string, rawMsg []byte) map[string]interface{}
+// }
+
+// func (msg *DnDfTracknet) Unmarshal(tcMsgType string, rawMsg []byte) map[string]interface{} {
+
+// }
+
 // FilterMessage func
 func (ctx *Context) FilterMessage(message AppxMessage) bool {
 	var fake map[string]interface{}
@@ -259,7 +269,7 @@ func (ctx *Context) FilterMessage(message AppxMessage) bool {
 			for _, allowedDeveui := range ctx.CompilledFilters.ReExpressions {
 				if allowedDeveui.MatchString( /*f.DevEui*/ fake["DevEui"].(string)) {
 					messagesPassedFilter.WithLabelValues(ctx.AppName, message.AppxID, message.AppxURL /*f.MsgType*/, fake["msgtype"].(string)).Inc()
-					//logger.WithFields(log.Fields{"uri": message.AppxURL, "id": message.AppxID}).Debugf("%+v", message.Message)
+					logger.WithFields(log.Fields{"uri": message.AppxURL, "id": message.AppxID}).Debugf("%+v", message.Message)
 					return true
 				}
 				messagesDroppedByDeveui.WithLabelValues(ctx.AppName, message.AppxID, message.AppxURL /*f.MsgType*/, fake["msgtype"].(string)).Inc()
@@ -333,6 +343,46 @@ func (ctx *Context) rethinkSink(queue []AppxMessage) {
 }
 */
 
+// SinkQueue func
+func (ctx *Context) SinkQueue(queue []AppxMessage) {
+	var batch []interface{}
+	for _, msg := range queue {
+		if ok := ctx.FilterMessage(msg); ok {
+			var event map[string]interface{}
+			json.Unmarshal(msg.Message, &event)
+
+			// fixing buggy trackcentral time handling and convert epoch to Time obj
+			if _, ok := event["ArrTime"]; ok {
+				event["ArrTime"] = time.Unix(int64(event["ArrTime"].(float64)), 0)
+			} else {
+				event["ArrTime"] = time.Now()
+				event["TimeMissing"] = true
+			}
+			// try to decode, if fail - leave message as is
+			event["DCDPayload"] = ctx.DecodePayload(event["DevEui"].(string), event["FRMPayload"].(string))
+			batch = append(batch, event)
+		}
+	}
+	logger.Infof("%d message(s) hit the sink, %d passed to decoders", len(queue), len(batch))
+
+	for _, storage := range ctx.Owner.StoragePrefList {
+		switch storage {
+		case "rethinkdb":
+			//go ctx.rethinkSink(batch)
+			break
+		case "elastic":
+			break
+		case "mqtt":
+			break
+		case "mongo":
+			break
+		default:
+			logger.Fatalf("Unknown storage driver in config %s", storage)
+		}
+	}
+
+}
+
 func (ctx *Context) rethinkSink(queue []AppxMessage) {
 	//var test UpDfTracknet
 	var upinfos []UpInfoElement
@@ -394,6 +444,30 @@ func (ctx *Context) DecodePayload(deveui string, payload string) interface{} {
 		}
 	}
 	return nil
+}
+
+// bigIntWorkaround func
+func upInfoWorkaround(event map[string]interface{}) {
+
+	var upinfos []UpInfoElement
+	if _, ok := event["upinfo"]; ok {
+		for _, upinfo := range event["upinfo"].([]interface{}) {
+			tmpb, err := json.Marshal(upinfo)
+			if err != nil {
+				logger.Panic(err)
+			}
+
+			var tmp UpInfoElement
+			err = json.Unmarshal(tmpb, &tmp)
+			if err != nil {
+				logger.Panic(err)
+			}
+			tmp.RouterIDStr = fmt.Sprint(tmp.RouterID)
+			upinfos = append(upinfos, tmp)
+			logger.Debugf("rid-int: %d, rid-str: %s, rssi: %+v", tmp.RouterID, tmp.RouterIDStr, tmp.RSSI)
+		}
+		event["upinfo"] = upinfos
+	}
 }
 
 /*
