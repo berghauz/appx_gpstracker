@@ -337,7 +337,8 @@ func (ctx *Context) rethinkSink(queue []AppxMessage) {
 	//var test UpDfTracknet
 	var upinfos []UpInfoElement
 	var batch []interface{}
-	r := re.DB("lora").Table("gpstracker")
+	ctx.CheckRethinkAlive()
+	r := re.DB(ctx.RethinkDB.DB).Table(ctx.RethinkDB.Collection)
 	for idx, msg := range queue {
 		var event map[string]interface{}
 		if ok := ctx.FilterMessage(msg); ok {

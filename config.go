@@ -7,13 +7,17 @@ import (
 	"github.com/go-yaml/yaml"
 	log "github.com/sirupsen/logrus"
 	re "gopkg.in/gorethink/gorethink.v4"
+	es "gopkg.in/olivere/elastic.v5"
 )
 
 // Context type
 type Context struct {
-	AppName string `yaml:"appname"`
-	Version int    `yaml:"version"`
-	Owner   struct {
+	AppName  string `yaml:"appname"`
+	Version  int    `yaml:"version"`
+	Decoders struct {
+		Path string `yaml:"path"`
+	} `yaml:"decoders"`
+	Owner struct {
 		ID               string   `yaml:"id"`
 		AppxBootstrapURI string   `yaml:"appx_bootstrap_uri"`
 		StoragePrefList  []string `yaml:"storage_pref_list"`
@@ -32,9 +36,14 @@ type Context struct {
 		URI        string   `yaml:"uri"`
 		URIs       []string `yaml:"uris"`
 		DB         string   `yaml:"db"`
+		Collection string   `yaml:"collection"`
 		InitialCap int      `yaml:"initial_cap"`
 		MaxOpen    int      `yaml:"max_open"`
 	} `yaml:"rethinkdb"`
+	Elastic struct {
+		Hosts []string `yaml:"hosts"`
+		Index string   `yaml:"index"`
+	} `yaml:"elastic"`
 	Filters struct {
 		DevEui  []string `yaml:"deveui"`
 		MsgType []string `yaml:"msg_type"`
@@ -43,6 +52,7 @@ type Context struct {
 	Appxs            TCIOInstance
 	CompilledFilters *DevEuiFilters
 	reSession        *re.Session
+	esClient         *es.Client
 }
 
 // TCIOInstance type
@@ -92,6 +102,12 @@ func CreateContext(config string) *Context {
 		logger.Fatalf("Error connecting to rethinkdb %+v", err)
 	}
 
+	ctx.esClient, err = es.NewClient(es.SetURL(ctx.Elastic.Hosts...))
+	if err != nil {
+		logger.Fatalf("Error connecting to elastic %+v", err)
+	}
+	//logger.Infof("ES %+v", ctx.esClient.String())
+
 	ctx.CompileFilters()
 	return &ctx
 }
@@ -125,4 +141,26 @@ func (ctx *Context) ReloadFilters(config string) {
 
 	ctx.Filters = tmp.Filters
 	ctx.CompileFilters()
+}
+
+// CheckRethinkAlive func
+func (ctx *Context) CheckRethinkAlive() {
+	var err error
+	if !ctx.reSession.IsConnected() {
+		ctx.reSession, err = re.Connect(re.ConnectOpts{
+			Address:    ctx.RethinkDB.URI,
+			Addresses:  ctx.RethinkDB.URIs,
+			InitialCap: ctx.RethinkDB.InitialCap,
+			MaxOpen:    ctx.RethinkDB.MaxOpen,
+		})
+		if err != nil {
+			logger.Fatalf("Error REconnecting to rethinkdb %+v", err)
+		}
+		logger.Warnln("Lost rethinkdb connect, reconnected")
+	}
+}
+
+// CheckElasticAlive func
+func (ctx *Context) CheckElasticAlive() {
+
 }
