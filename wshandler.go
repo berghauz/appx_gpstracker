@@ -97,8 +97,8 @@ func (conn *connection) ListenAppxNode(appxMessage chan<- AppxMessage) {
 		wggs.Done()
 	}()
 	for {
-		var value []byte
-		var appxMsg = AppxMessage{conn.appxURI, conn.appxID, value}
+		//		var value []byte
+		var appxMsg = AppxMessage{AppxURL: conn.appxURI, AppxID: conn.appxID}
 		if conn.alive {
 			_, appxMsg.Message, err = conn.ws.ReadMessage()
 			if err != nil {
