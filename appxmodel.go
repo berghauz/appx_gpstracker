@@ -3,12 +3,35 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"sync"
 	"time"
 
 	log "github.com/sirupsen/logrus"
-	re "gopkg.in/gorethink/gorethink.v4"
 )
+
+// generic types for smooth rethinkdb edges like lack of big int support
+
+// Time type
+type Time struct {
+	time.Time
+}
+
+// SetDefault func
+func (t *Time) SetDefault() {
+	t.Time = time.Now().Truncate(time.Second)
+}
+
+// BigInt type
+// type BigInt struct {
+// 	string
+// }
+
+type BigInt string
+
+func (b BigInt) Set(value string) {
+	b = BigInt(value)
+}
 
 /*
 EUI64		string of the form HH-HH-HH-HH-HH-HH-HH-HH whereby HH represents two uppercase hex digits
@@ -39,15 +62,18 @@ UPID 		INT8 and unique message number per service end point
 }
 */
 
-// DnDfTracknet type
+// TracknetDnDfMsg type
 // Submits a downstream message for transmission within the next downlink window for a given device.
-type DnDfTracknet struct {
-	MsgType    string `json:"msgtype"`
-	MsgID      int64  `json:"MsgId"`
-	FPort      uint8  `json:"FPort"`
-	FRMPayload string `json:"FRMPayload"`
-	DevEui     string `json:"DevEui"`
-	Confirm    bool   `json:"confirm"`
+type TracknetDnDfMsg struct {
+	MsgType    string `json:"msgtype,omitempty"`
+	MsgID      BigInt `json:"MsgId,omitempty"`
+	FPort      uint8  `json:"FPort,omitempty"`
+	FRMPayload string `json:"FRMPayload,omitempty"`
+	DevEui     string `json:"DevEui,omitempty"`
+	Confirm    bool   `json:"confirm,omitempty"`
+	//Payload    map[string]interface{} `json:"payload,omitempty"`
+	ArrTime   Time `json:"ArrTime,omitempty"` // there is no such field in original tcio message, but for convenience' sake we add it
+	SynthTime bool `json:"SinthTime,omitempty"`
 }
 
 /*
@@ -66,7 +92,6 @@ type DnDfTracknet struct {
 */
 
 /*
-
 "AFCntDown": 253 ,
 "AppSKeyEnv": null ,
 "ArrTime": 1532602005.487868 ,
@@ -85,24 +110,25 @@ type DnDfTracknet struct {
 +"region":  "EU863" ,
 "regionid": 1 ,
 +"upid": 49373205491740460
-
 */
 
-// UpDfTracknet type
+// TracknetUpDfMsg type
 // Reports an upstream message with its up data frame payload as transmitted by a given device and additional context information. This message is
 // forwarded without delay and, if a given up data frame is received by multiple gateways, only the first copy received is forwarded.
-type UpDfTracknet struct {
-	MsgType    string    `json:"msgtype"`
-	DevEui     string    `json:"DevEui"`
-	UPID       int64     `json:"upid"`
-	SessID     int32     `json:"SessID"`
-	FCntUp     uint32    `json:"FCntUp"`
-	FPort      uint8     `json:"FPort"`
-	FRMPayload string    `json:"FRMPayload"`
-	DR         int64     `json:"DR"`
-	Freq       int64     `json:"Freq"`
-	Region     string    `json:"region"`
-	ArrTime    time.Time `json:"ArrTime"`
+type TracknetUpDfMsg struct {
+	MsgType    string `json:"msgtype,omitempty"`
+	DevEui     string `json:"DevEui,omitempty"`
+	UPID       BigInt `json:"upid,omitempty"`
+	SessID     BigInt `json:"SessID,omitempty"`
+	FCntUp     uint32 `json:"FCntUp,omitempty"`
+	FPort      uint8  `json:"FPort,omitempty"`
+	FRMPayload string `json:"FRMPayload,omitempty"`
+	DR         uint32 `json:"DR,omitempty"`
+	Freq       uint32 `json:"Freq,omitempty"`
+	Region     string `json:"region,omitempty"`
+	ArrTime    Time   `json:"ArrTime,omitempty"` // there is no such field in original tcio message, but for convenience' sake we add it
+	SynthTime  bool   `json:"SinthTime,omitempty"`
+	//Payload    map[string]interface{} `json:"payload,omitempty"`
 }
 
 /*
@@ -137,33 +163,34 @@ UOBJ = {
 }
 */
 
-// UpInfoTracknet type
+// TracknetUpInfoMsg type
 // Reports additional context information about an up data frame as received from a given device. This information usually arrives a short time after a
 // corresponding updf message because forwarding is delayed to take into account context information from potentially multiple routers for the same
 // up data frame.
 //
 //An upinfo can be linked to its corresponding updf message via the SessID and FCntUp fields. Note: The value of upid is unique for each
 //updf and upinfo messages and therefore does NOT link the upinfo message to a updf message.
-type UpInfoTracknet struct {
-	UpDfTracknet
-	Upinfo []UpInfoElement `json:"upinfo"`
+type TracknetUpInfoMsg struct {
+	TracknetUpDfMsg
+	UpInfo []TracknetUpInfoElement `json:"upinfo,omitempty"`
 }
 
-// UpInfoElement type element of UpInfo
-type UpInfoElement struct {
-	ArrTime     float64 `json:"ArrTime" gorethink:"ArrTime"`
-	RX1DRoff    int64   `json:"RX1DRoff" gorethink:"RX1DRoff"` // expected type
-	RxDelay     int64   `json:"RxDelay" gorethink:"RxDelay"`   // expected type
-	DoorID      int64   `json:"doorid" gorethink:"doorid"`     // expected type
-	MuxID       int64   `json:"muxid" gorethink:"muxid"`
-	RegionID    int64   `json:"regionid" gorethink:"regionid"` // expected type
-	RouterID    int64   `json:"routerid" gorethink:"routerid"`
-	RouterIDStr string  `json:"routerid_str" gorethink:"routerid_str"`
-	RSSI        float64 `json:"rssi" gorethink:"rssi"`
-	RTT         []int16 `json:"rtt" gorethink:"rtt"`
-	RxTime      float64 `json:"rxtime" gorethink:"rxtime"` // expected type
-	SNR         float64 `json:"snr" gorethink:"snr"`
-	Xtime       float64 `json:"xtime" gorethink:"xtime"` // expected type
+// TracknetUpInfoElement type element of UpInfo
+type TracknetUpInfoElement struct {
+	RouterID BigInt  `json:"routerid,omitempty" gorethink:"routerid,omitempty"`
+	MuxID    BigInt  `json:"muxid,omitempty" gorethink:"muxid,omitempty"`
+	RSSI     float64 `json:"rssi,omitempty" gorethink:"rssi,omitempty"`
+	SNR      float64 `json:"snr,omitempty" gorethink:"snr,omitempty"`
+	ArrTime  Time    `json:"ArrTime,omitempty" gorethink:"ArrTime,omitempty"`
+
+	//RX1DRoff int64   `json:"RX1DRoff,omitempty" gorethink:"RX1DRoff,omitempty"` // expected type
+	//RxDelay  int64   `json:"RxDelay,omitempty" gorethink:"RxDelay,omitempty"`   // expected type
+	//DoorID   int64   `json:"doorid,omitempty" gorethink:"doorid,omitempty"`     // expected type
+	//RegionID int64   `json:"regionid,omitempty" gorethink:"regionid,omitempty"` // expected type
+	//RTT      []int16 `json:"rtt,omitempty" gorethink:"rtt,omitempty"`
+	//RxTime   Date    `json:"rxtime,omitempty" gorethink:"rxtime,omitempty"` // expected type
+	//Xtime    Date    `json:"xtime,omitempty" gorethink:"xtime,omitempty"`   // expected type
+	//RouterIDStr string  `json:"routerid_str,omitempty" gorethink:"routerid_str,omitempty"`
 }
 
 /*
@@ -178,18 +205,20 @@ type UpInfoElement struct {
 }
 */
 
-// DnTxedTracknet type
+// TracknetDnTxedMsg type
 // Reports successful transmission of a down data frame. The MsgId field links the dntxed message to the corresponding dndf message.
 // Note that for confirmed down data frames every retransmission is reported separately until eventually acknowledged by the device, or until the
 // buffered downstream message is deleted or replaced by the application.
-type DnTxedTracknet struct {
+type TracknetDnTxedMsg struct {
 	MsgType string `json:"msgtype"`
 	MsgID   int64  `json:"MsgId"`
 	UpInfo  struct {
 		RouterID int64 `json:"routerid"`
 	} `json:"upinfo"`
-	Confirm bool   `json:"confirm"`
-	DevEui  string `json:"DevEui"`
+	Confirm   bool   `json:"confirm"`
+	DevEui    string `json:"DevEui"`
+	ArrTime   Time   `json:"ArrTime,omitempty"` // there is no such field in original tcio message, but for convenience' sake we add it
+	SynthTime bool   `json:"SinthTime,omitempty"`
 }
 
 /*
@@ -199,14 +228,16 @@ type DnTxedTracknet struct {
 }
 */
 
-// DnAckedTracknet type
+// TracknetDnAckedMsg type
 // Reports acknowledgement of reception of a given down data frame by the device. The downstream message must have requested a confirmed down
 // data frame.
 // Note that for confirmed down data frames every retransmission is reported separately until eventually acknowledged by the device, or until the
 // buffered downstream message is deleted or replaced by the application.
-type DnAckedTracknet struct {
-	MsgType string `json:"msgtype"`
-	MsgID   int64  `json:"MsgId"`
+type TracknetDnAckedMsg struct {
+	MsgType   string `json:"msgtype"`
+	MsgID     int64  `json:"MsgId"`
+	ArrTime   Time   `json:"ArrTime,omitempty"` // there is no such field in original tcio message, but for convenience' sake we add it
+	SynthTime bool   `json:"SinthTime,omitempty"`
 }
 
 /*
@@ -222,24 +253,23 @@ type DnAckedTracknet struct {
 }
 */
 
-//JoiningTracknet type
+//TracknetJoiningMsg type
 // A joining message signals that a device, identified by the DevEui, initiated an over-the-air activation (OTAA) to the network.
-type JoiningTracknet struct {
-	MsgType string          `json:"msgtype"`
-	SessID  int32           `json:"SessID"`
-	NetID   int32           `json:"NetID"`
-	DevEui  string          `json:"DevEui"`
-	DR      int64           `json:"DR"`
-	Freq    int64           `json:"Freq"`
-	Region  string          `json:"region"`
-	Upinfo  []UpInfoElement `json:"upinfo"`
+type TracknetJoiningMsg struct {
+	MsgType   string                  `json:"msgtype"`
+	SessID    int32                   `json:"SessID"`
+	NetID     int32                   `json:"NetID"`
+	DevEui    string                  `json:"DevEui"`
+	DR        int64                   `json:"DR"`
+	Freq      int64                   `json:"Freq"`
+	Region    string                  `json:"region"`
+	UpInfos   []TracknetUpInfoElement `json:"upinfo"`
+	ArrTime   Time                    `json:"ArrTime,omitempty"` // there is no such field in original tcio message, but for convenience' sake we add it
+	SynthTime bool                    `json:"SinthTime,omitempty"`
 }
 
-// fake is a fake model, used as filtering match helper
-// type fake struct {
-// 	MsgType string `json:"msgtype"`
-// 	DevEui  string `json:"DevEui"`
-// }
+// Payload itself
+//type Payload map[string]interface{}
 
 // AppxMessage type
 type AppxMessage struct {
@@ -248,36 +278,149 @@ type AppxMessage struct {
 	Message []byte
 }
 
-// var TCIOMessages = map[string]TCIOMessage{"dndf": &DnDfTracknet{}}
+// TrackNetMessage type
+type TrackNetMessage struct {
+	MsgType             string `json:"-"`
+	DevEui              string `json:"-"`
+	*TracknetDnDfMsg    `json:"dndf,omitempty"`
+	*TracknetUpDfMsg    `json:"updf,omitempty"`
+	*TracknetUpInfoMsg  `json:"upinfo,omitempty"`
+	*TracknetDnTxedMsg  `json:"dntxed,omitempty"`
+	*TracknetDnAckedMsg `json:"dnacked,omitempty"`
+	*TracknetJoiningMsg `json:"joining,omitempty"`
+}
 
-// type TCIOMessage interface {
-// 	Unmarshal(tcMsgType string, rawMsg []byte) map[string]interface{}
-// }
+// Get func
+func (m *TrackNetMessage) Get() map[string]interface{} {
 
-// func (msg *DnDfTracknet) Unmarshal(tcMsgType string, rawMsg []byte) map[string]interface{} {
+	switch m.MsgType {
+	case "updf":
+		// dumb shit, but we need the time for es in any possible way
+		if m.TracknetUpDfMsg.ArrTime.Unix() < 0 {
+			m.TracknetUpDfMsg.ArrTime.SetDefault()
+			m.TracknetUpDfMsg.SynthTime = true
+		}
+		return StructToMap(m.TracknetUpDfMsg)
+	case "upinfo":
+		if m.TracknetUpInfoMsg.ArrTime.Unix() < 0 {
+			m.TracknetUpInfoMsg.ArrTime.SetDefault()
+			m.TracknetUpInfoMsg.SynthTime = true
+		}
+		return StructToMap(m.TracknetUpInfoMsg)
+	}
+	return nil
+}
 
+// StructToMap func
+func StructToMap(message interface{}) map[string]interface{} {
+
+	var tmp map[string]interface{}
+	bytes, err := json.Marshal(message)
+	if err != nil {
+		logger.Warnf("Can't marshal %+v", message)
+	}
+	if err = json.Unmarshal(bytes, &tmp); err != nil {
+		logger.Warnf("Can't unmarshal %+v", bytes)
+	}
+	return tmp
+}
+
+// UnmarshalJSON func
+func (b *BigInt) UnmarshalJSON(data []byte) error {
+	var i int64
+
+	if err := json.Unmarshal(data, &i); err != nil {
+		return err
+	}
+
+	*b = BigInt(fmt.Sprintf("%d", i))
+	//fmt.Println(*b)
+	return nil
+}
+
+// UnmarshalJSON func
+func (t *Time) UnmarshalJSON(data []byte) error {
+	var i float64
+	if err := json.Unmarshal(data, &i); err != nil {
+		return err
+	}
+	sec, dec := math.Modf(i)
+	t.Time = time.Unix(int64(sec), int64(dec*( /*1e9*/ 0)))
+	return nil
+}
+
+// UnmarshalJSON interface realisation for tracknet message type
+func (m *TrackNetMessage) UnmarshalJSON(data []byte) error {
+	temp := struct {
+		MsgType string `json:"msgtype"`
+	}{}
+
+	if err := json.Unmarshal(data, &temp); err != nil {
+		return err
+	}
+
+	switch temp.MsgType {
+	case "updf":
+		var tmpMsg TracknetUpDfMsg
+		if err := json.Unmarshal(data, &tmpMsg); err != nil {
+			return err
+		}
+		m.TracknetUpDfMsg = &tmpMsg
+		m.MsgType = temp.MsgType
+		m.DevEui = tmpMsg.DevEui
+		break
+	case "upinfo":
+		var tmpMsg TracknetUpInfoMsg
+		if err := json.Unmarshal(data, &tmpMsg); err != nil {
+			return err
+		}
+		m.TracknetUpInfoMsg = &tmpMsg
+		m.MsgType = temp.MsgType
+		m.DevEui = tmpMsg.DevEui
+		break
+	default:
+		return fmt.Errorf("Unknown tracknet message type: %s", temp.MsgType)
+	}
+
+	return nil
+}
+
+// FilterMessage func
+
+// func (ctx *Context) FilterMessage(message AppxMessage) bool {
+// 	var fake map[string]interface{}
+// 	//f := fake{}
+// 	json.Unmarshal(message.Message, &fake)
+// 	messagesRecievedByFilter.WithLabelValues(ctx.AppName, message.AppxID, message.AppxURL /*f.MsgType*/, fake["msgtype"].(string)).Inc()
+// 	for _, allowedType := range ctx.Filters.MsgType {
+// 		if /*f.MsgType*/ fake["msgtype"].(string) == allowedType || allowedType == "*" {
+// 			for _, allowedDeveui := range ctx.CompilledFilters.ReExpressions {
+// 				if allowedDeveui.MatchString( /*f.DevEui*/ fake["DevEui"].(string)) {
+// 					messagesPassedFilter.WithLabelValues(ctx.AppName, message.AppxID, message.AppxURL /*f.MsgType*/, fake["msgtype"].(string)).Inc()
+// 					logger.WithFields(log.Fields{"uri": message.AppxURL, "id": message.AppxID}).Debugf("%+v", message.Message)
+// 					return true
+// 				}
+// 				messagesDroppedByDeveui.WithLabelValues(ctx.AppName, message.AppxID, message.AppxURL /*f.MsgType*/, fake["msgtype"].(string)).Inc()
+// 			}
+// 		} else {
+// 			messagesDroppedByType.WithLabelValues(ctx.AppName, message.AppxID, message.AppxURL /*f.MsgType*/, fake["msgtype"].(string)).Inc()
+// 		}
+// 	}
+// 	return false
 // }
 
 // FilterMessage func
-func (ctx *Context) FilterMessage(message AppxMessage) bool {
-	var fake map[string]interface{}
-	//f := fake{}
-	json.Unmarshal(message.Message, &fake)
-	messagesRecievedByFilter.WithLabelValues(ctx.AppName, message.AppxID, message.AppxURL /*f.MsgType*/, fake["msgtype"].(string)).Inc()
+func (ctx *Context) FilterMessage(message *TrackNetMessage) bool {
 	for _, allowedType := range ctx.Filters.MsgType {
-		if /*f.MsgType*/ fake["msgtype"].(string) == allowedType || allowedType == "*" {
+		if message.MsgType == allowedType || allowedType == "*" {
 			for _, allowedDeveui := range ctx.CompilledFilters.ReExpressions {
-				if allowedDeveui.MatchString( /*f.DevEui*/ fake["DevEui"].(string)) {
-					messagesPassedFilter.WithLabelValues(ctx.AppName, message.AppxID, message.AppxURL /*f.MsgType*/, fake["msgtype"].(string)).Inc()
-					logger.WithFields(log.Fields{"uri": message.AppxURL, "id": message.AppxID}).Debugf("%+v", message.Message)
+				if allowedDeveui.MatchString( /*f.DevEui*/ message.DevEui) {
 					return true
 				}
-				messagesDroppedByDeveui.WithLabelValues(ctx.AppName, message.AppxID, message.AppxURL /*f.MsgType*/, fake["msgtype"].(string)).Inc()
 			}
-		} else {
-			messagesDroppedByType.WithLabelValues(ctx.AppName, message.AppxID, message.AppxURL /*f.MsgType*/, fake["msgtype"].(string)).Inc()
 		}
 	}
+	logger.Infof("Dropped %s from %s", message.MsgType, message.DevEui)
 	return false
 }
 
@@ -291,20 +434,27 @@ func (ctx *Context) QueueProcessing(message <-chan AppxMessage, wg *sync.WaitGro
 		select {
 		case newMsg := <-message:
 			buf = append(buf, newMsg)
+			// think about => instead
 			if len(buf) == ctx.Owner.QueueFlushCount {
-				ctx.rethinkSink(buf)
+				go ctx.SinkQueue(buf)
 				buf = nil
 				break
 			}
 		case <-flushTicker.C:
-			ctx.rethinkSink(buf)
-			buf = nil
+			if len(buf) > 0 {
+				go ctx.SinkQueue(buf)
+				buf = nil
+			}
 			flushTicker = time.NewTicker(timeout)
 			break
 		case <-shutdown:
-			ctx.rethinkSink(buf)
-			logger.Infof("QueueProcessing is terminating, flushing %v messages by final batch", len(buf))
-			buf = nil
+			if len(buf) > 0 {
+				logger.Infof("QueueProcessing is terminating, flushing %v messages by final batch", len(buf))
+				ctx.SinkQueue(buf)
+				buf = nil
+			} else {
+				logger.Infoln("QueueProcessing is terminating, nothing to flush.")
+			}
 			flushTicker.Stop()
 			wggs.Done()
 			return
@@ -314,13 +464,42 @@ func (ctx *Context) QueueProcessing(message <-chan AppxMessage, wg *sync.WaitGro
 
 // dummysink
 func (ctx *Context) dummysink(batch []AppxMessage) {
-	var event interface{}
-	for idx, msg := range batch {
-		if ok := ctx.FilterMessage(msg); ok {
-			json.Unmarshal(msg.Message, &event)
-			log.Infof("%v, %v=>%v <%+v>", idx, msg.AppxID, msg.AppxURL, event)
+	for _, msg := range batch {
+		var event TrackNetMessage
+		err := json.Unmarshal(msg.Message, &event)
+		if err != nil {
+			fmt.Println(err)
+		}
+		if ok := ctx.FilterMessage(&event); ok {
+			//log.Infof("%v, %v=>%v <%+v>", idx, msg.AppxID, msg.AppxURL, event)
+			//logger.Info(event.dummyPrint())
+			event.dummyPrint()
+			//Messages[event.MsgType].Get()
 		}
 	}
+}
+
+func (m *TrackNetMessage) dummyPrint() {
+	b, err := json.Marshal(m)
+	if err != nil {
+		panic(err)
+	}
+	logger.Debugln(string(b))
+
+	// switch m.MsgType {
+	// case "updf":
+	// 	b, err := json.Marshal(m.TracknetUpDfMsg)
+	// 	if err != nil {
+	// 		panic(err)
+	// 	}
+	// 	logger.Println(string(b))
+	// case "upinfo":
+	// 	b, err := json.Marshal(m.TracknetUpInfoMsg)
+	// 	if err != nil {
+	// 		panic(err)
+	// 	}
+	// 	logger.Println(string(b))
+	// }
 }
 
 // rethinkSink
@@ -345,47 +524,77 @@ func (ctx *Context) rethinkSink(queue []AppxMessage) {
 
 // SinkQueue func
 func (ctx *Context) SinkQueue(queue []AppxMessage) {
-	var batch []interface{}
-	for _, msg := range queue {
-		if ok := ctx.FilterMessage(msg); ok {
-			var event map[string]interface{}
-			json.Unmarshal(msg.Message, &event)
+	var (
+		batch []interface{}
+		msg   map[string]interface{}
+	)
 
-			// fixing buggy trackcentral time handling and convert epoch to Time obj
-			if _, ok := event["ArrTime"]; ok {
-				event["ArrTime"] = time.Unix(int64(event["ArrTime"].(float64)), 0)
-			} else {
-				event["ArrTime"] = time.Now()
-				event["TimeMissing"] = true
+	for _, appxMsg := range queue {
+		var event TrackNetMessage
+		err := json.Unmarshal(appxMsg.Message, &event)
+		if err != nil {
+			fmt.Println(err)
+		}
+
+		if ok := ctx.FilterMessage(&event); ok {
+			msg = event.Get()
+			switch event.MsgType {
+			case "updf":
+				msg["payload"] = ctx.DecodePayload(event.TracknetUpDfMsg.DevEui, event.TracknetUpDfMsg.FRMPayload)
+			case "upinfo":
+			case "dndf":
+			default:
 			}
-			// try to decode, if fail - leave message as is
-			event["DCDPayload"] = ctx.DecodePayload(event["DevEui"].(string), event["FRMPayload"].(string))
-			batch = append(batch, event)
+			//b, _ := json.Marshal(event.Get())
+			//fmt.Println(string(b))
+			batch = append(batch, msg)
 		}
 	}
-	logger.Infof("%d message(s) hit the sink, %d passed to decoders", len(queue), len(batch))
+	b, _ := json.Marshal(batch)
+	logger.Debugln(string(b))
 
-	for _, storage := range ctx.Owner.StoragePrefList {
-		switch storage {
-		case "rethinkdb":
-			//go ctx.rethinkSink(batch)
-			break
-		case "elastic":
-			break
-		case "mqtt":
-			break
-		case "mongo":
-			break
-		default:
-			logger.Fatalf("Unknown storage driver in config %s", storage)
-		}
-	}
+	// for _, msg := range queue {
+	// 	if ok := ctx.FilterMessage(msg); ok {
+	// 		var event map[string]interface{}
+	// 		json.Unmarshal(msg.Message, &event)
+
+	// 		// fixing buggy trackcentral time handling and convert epoch to Time obj
+	// 		if _, ok := event["ArrTime"]; ok {
+	// 			event["ArrTime"] = time.Unix(int64(event["ArrTime"].(float64)), 0)
+	// 		} else {
+	// 			event["ArrTime"] = time.Now()
+	// 			event["TimeMissing"] = true
+	// 		}
+	// 		// try to decode, if fail - leave message as is
+	// 		//event["DCDPayload"] = ctx.DecodePayload(event["DevEui"].(string), event["FRMPayload"].(string))
+	// 		batch = append(batch, event)
+	// 	}
+	// }
+
+	//logger.Infof("%d message(s) hit the sink, %d passed to decoders", len(queue), len(batch))
+
+	// for _, storage := range ctx.Owner.StoragePrefList {
+	// 	switch storage {
+	// 	case "rethinkdb":
+	// 		//go ctx.rethinkSink(batch)
+	// 		break
+	// 	case "elastic":
+	// 		break
+	// 	case "mqtt":
+	// 		break
+	// 	case "mongo":
+	// 		break
+	// 	default:
+	// 		logger.Fatalf("Unknown storage driver in config %s", storage)
+	// 	}
+	// }
 
 }
 
+/*
 func (ctx *Context) rethinkSink(queue []AppxMessage) {
 	//var test UpDfTracknet
-	var upinfos []UpInfoElement
+	var upinfos []TracknetUpInfoElement
 	var batch []interface{}
 	ctx.CheckRethinkAlive()
 	r := re.DB(ctx.RethinkDB.DB).Table(ctx.RethinkDB.Collection)
@@ -409,7 +618,7 @@ func (ctx *Context) rethinkSink(queue []AppxMessage) {
 						logger.Panic(err)
 					}
 
-					var tmp UpInfoElement
+					var tmp TracknetUpInfoElement
 					err = json.Unmarshal(tmpb, &tmp)
 					if err != nil {
 						logger.Panic(err)
@@ -428,6 +637,7 @@ func (ctx *Context) rethinkSink(queue []AppxMessage) {
 		log.Warn("error insert to db")
 	}
 }
+*/
 
 // DecodePayload func
 func (ctx *Context) DecodePayload(deveui string, payload string) interface{} {
@@ -447,9 +657,10 @@ func (ctx *Context) DecodePayload(deveui string, payload string) interface{} {
 }
 
 // bigIntWorkaround func
+/*
 func upInfoWorkaround(event map[string]interface{}) {
 
-	var upinfos []UpInfoElement
+	var upinfos []TracknetUpInfoElement
 	if _, ok := event["upinfo"]; ok {
 		for _, upinfo := range event["upinfo"].([]interface{}) {
 			tmpb, err := json.Marshal(upinfo)
@@ -457,7 +668,7 @@ func upInfoWorkaround(event map[string]interface{}) {
 				logger.Panic(err)
 			}
 
-			var tmp UpInfoElement
+			var tmp TracknetUpInfoElement
 			err = json.Unmarshal(tmpb, &tmp)
 			if err != nil {
 				logger.Panic(err)
@@ -469,48 +680,4 @@ func upInfoWorkaround(event map[string]interface{}) {
 		event["upinfo"] = upinfos
 	}
 }
-
-/*
-func (ctx *Context) QueueProcessing(msg <-chan AppxMessage) {
-	for {
-		f := fake{}
-		newMsg := <-msg
-		json.Unmarshal(newMsg.Message, &f)
-
-		messagesRecievedByFilter.WithLabelValues(ctx.AppName, newMsg.AppxID, newMsg.AppxURL, f.MsgType).Inc()
-
-		for _, allowedType := range ctx.Filters.MsgType {
-			if f.MsgType == allowedType || allowedType == "*" {
-				for _, allowedDeveui := range ctx.CompilledFilters.ReExpressions {
-					if allowedDeveui.MatchString(f.DevEui) {
-						messagesPassedFilter.WithLabelValues(ctx.AppName, newMsg.AppxID, newMsg.AppxURL, f.MsgType).Inc()
-						logger.WithFields(log.Fields{"uri": newMsg.AppxURL, "id": newMsg.AppxID}).Debugf("%+v", newMsg.Message)
-					} else {
-						messagesDroppedByDeveui.WithLabelValues(ctx.AppName, newMsg.AppxID, newMsg.AppxURL, f.MsgType).Inc()
-					}
-				}
-			} else {
-				messagesDroppedByType.WithLabelValues(ctx.AppName, newMsg.AppxID, newMsg.AppxURL, f.MsgType).Inc()
-			}
-		}
-	}
-}
-*/
-
-/*
-	for _, allowedType := range ctx.Filters.MsgType {
-		if f.MsgType == allowedType || allowedType == "*" {
-			for _, allowedDeveui := range ctx.Filters.DevEui {
-				if f.DevEui == allowedDeveui || allowedDeveui == "*" {
-					messagesPassedFilter.WithLabelValues(ctx.AppName, newMsg.AppxID, newMsg.AppxURL, f.MsgType).Inc()
-					logger.WithFields(log.Fields{"uri": newMsg.AppxURL, "id": newMsg.AppxID}).Debugf("%+v", newMsg.Message)
-				} else {
-					messagesDroppedByDeveui.WithLabelValues(ctx.AppName, newMsg.AppxID, newMsg.AppxURL, f.MsgType).Inc()
-				}
-			}
-		} else {
-			messagesDroppedByType.WithLabelValues(ctx.AppName, newMsg.AppxID, newMsg.AppxURL, f.MsgType).Inc()
-		}
-	}
-
 */
