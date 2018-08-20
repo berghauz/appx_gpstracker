@@ -2,6 +2,8 @@ package main
 
 import (
 	"io/ioutil"
+	"path/filepath"
+	"plugin"
 	"regexp"
 
 	"github.com/go-yaml/yaml"
@@ -49,6 +51,7 @@ type Context struct {
 		MsgType []string `yaml:"msg_type"`
 	} `yaml:"filters"`
 	Inventory        map[string]string `yaml:"inventory"`
+	DecodePlugins    map[string]func(string) (interface{}, error)
 	Appxs            TCIOInstance
 	CompilledFilters *DevEuiFilters
 	reSession        *re.Session
@@ -74,6 +77,11 @@ type ExchangePoint struct {
 type DevEuiFilters struct {
 	ReExpressions []*regexp.Regexp
 	//mu            sync.Mutex
+}
+
+type Decoder struct {
+	Type    string
+	Version string
 }
 
 //var devEuiFilters *DevEuiFilters
@@ -109,7 +117,77 @@ func CreateContext(config string) *Context {
 	//logger.Infof("ES %+v", ctx.esClient.String())
 
 	ctx.CompileFilters()
+	ctx.LoadDecoders()
+	// p, err := plugin.Open("/home/berg/go/src/github.com/berghauz/appx_decoders/TN-T0004001/TN-T0004001.so")
+	// if err != nil {
+	// 	panic(err)
+	// }
+	// fmt.Printf("%+v\n", p)
+
+	// t, err := p.Lookup("Test")
+	// if err != nil {
+	// 	panic(err)
+	// }
+
+	// fmt.Println(reflect.TypeOf(t))
+
+	// info, err := p.Lookup("Decoder")
+	// if err != nil {
+	// 	panic(err)
+	// }
+	// var dec Decoder
+	// fmt.Println("loaded: ", reflect.TypeOf(info))
+	// fmt.Println("local: ", reflect.TypeOf(dec))
+	// pg := info.(Decoder)
+	// fmt.Println(*info.(*string))
+
+	// decode, err := p.Lookup("Decode")
+	// if err != nil {
+	// 	panic(err)
+	// }
+	//a := decode.(func(string) (interface{}, error))
+	// fmt.Println(reflect.TypeOf(decode))
+	// ctx.DecodePlugins[*info.(*string)] = decode.(func(string) (interface{}, error))
+
+	// all_plugins, err := filepath.Glob("plugins/*.so")
+	// if err != nil {
+	//     panic(err)
+	// }
+
 	return &ctx
+}
+
+// LoadDecoders func
+func (ctx *Context) LoadDecoders() {
+	// init decoders map
+	ctx.DecodePlugins = make(map[string]func(string) (interface{}, error))
+	allDecoders, err := filepath.Glob(ctx.Decoders.Path + "/*.so")
+	if err != nil {
+		logger.WithFields(log.Fields{"path": ctx.Decoders.Path}).Fatalf("Can't list decoders dir: %v", err)
+	}
+
+	for _, decoder := range allDecoders {
+		// try to load decoder
+		p, err := plugin.Open(decoder)
+		if err != nil {
+			logger.WithFields(log.Fields{"decoder": decoder}).Fatalf("Can't load decoder: %v", err)
+		}
+		// import descriptive type of decoder
+		decoderType, err := p.Lookup("Decoder")
+		if err != nil {
+			logger.WithFields(log.Fields{"decoder": decoder}).Fatalf("Can't import type of decoder: %v", err)
+		}
+		// import decoder method
+		decodeMethod, err := p.Lookup("Decode")
+		if err != nil {
+			logger.WithFields(log.Fields{"decoder": decoder}).Fatalf("Can't import decoder method: %v", err)
+		}
+		ctx.DecodePlugins[*decoderType.(*string)] = decodeMethod.(func(string) (interface{}, error))
+	}
+
+	for decoderType := range ctx.DecodePlugins {
+		logger.Infof("Decoder loaded: %s", decoderType)
+	}
 }
 
 // CompileFilters func

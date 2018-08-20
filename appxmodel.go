@@ -524,6 +524,7 @@ func (ctx *Context) rethinkSink(queue []AppxMessage) {
 
 // SinkQueue func
 func (ctx *Context) SinkQueue(queue []AppxMessage) {
+
 	var (
 		batch []interface{}
 		msg   map[string]interface{}
@@ -540,7 +541,8 @@ func (ctx *Context) SinkQueue(queue []AppxMessage) {
 			msg = event.Get()
 			switch event.MsgType {
 			case "updf":
-				msg["payload"] = ctx.DecodePayload(event.TracknetUpDfMsg.DevEui, event.TracknetUpDfMsg.FRMPayload)
+				//msg["payload"] = ctx.DecodePayload(event.TracknetUpDfMsg.DevEui, event.TracknetUpDfMsg.FRMPayload)
+				msg["payload"], _ = ctx.DecodePlugins["TN-T0004001"](event.TracknetUpDfMsg.FRMPayload)
 			case "upinfo":
 			case "dndf":
 			default:
@@ -652,6 +654,8 @@ func (ctx *Context) DecodePayload(deveui string, payload string) interface{} {
 		default:
 			return nil
 		}
+	} else {
+		logger.WithFields(log.Fields{"DevEui": deveui, "payload": payload}).Errorln("Device not listed in inventory")
 	}
 	return nil
 }
