@@ -51,7 +51,7 @@ type Context struct {
 		MsgType []string `yaml:"msg_type"`
 	} `yaml:"filters"`
 	Inventory        map[string]string `yaml:"inventory"`
-	DecodePlugins    map[string]func(string) (interface{}, error)
+	DecodingPlugins  map[string]func(string) (interface{}, error)
 	Appxs            TCIOInstance
 	CompilledFilters *DevEuiFilters
 	reSession        *re.Session
@@ -100,67 +100,50 @@ func CreateContext(config string) *Context {
 		logger.WithFields(log.Fields{"config": config}).Fatalf("Can't parse config file %+v", err)
 	}
 
-	ctx.reSession, err = re.Connect(re.ConnectOpts{
-		Address:    ctx.RethinkDB.URI,
-		Addresses:  ctx.RethinkDB.URIs,
-		InitialCap: ctx.RethinkDB.InitialCap,
-		MaxOpen:    ctx.RethinkDB.MaxOpen,
-	})
-	if err != nil {
-		logger.Fatalf("Error connecting to rethinkdb %+v", err)
-	}
-
-	ctx.esClient, err = es.NewClient(es.SetURL(ctx.Elastic.Hosts...))
-	if err != nil {
-		logger.Fatalf("Error connecting to elastic %+v", err)
-	}
-	//logger.Infof("ES %+v", ctx.esClient.String())
-
 	ctx.CompileFilters()
-	ctx.LoadDecoders()
-	// p, err := plugin.Open("/home/berg/go/src/github.com/berghauz/appx_decoders/TN-T0004001/TN-T0004001.so")
-	// if err != nil {
-	// 	panic(err)
-	// }
-	// fmt.Printf("%+v\n", p)
-
-	// t, err := p.Lookup("Test")
-	// if err != nil {
-	// 	panic(err)
-	// }
-
-	// fmt.Println(reflect.TypeOf(t))
-
-	// info, err := p.Lookup("Decoder")
-	// if err != nil {
-	// 	panic(err)
-	// }
-	// var dec Decoder
-	// fmt.Println("loaded: ", reflect.TypeOf(info))
-	// fmt.Println("local: ", reflect.TypeOf(dec))
-	// pg := info.(Decoder)
-	// fmt.Println(*info.(*string))
-
-	// decode, err := p.Lookup("Decode")
-	// if err != nil {
-	// 	panic(err)
-	// }
-	//a := decode.(func(string) (interface{}, error))
-	// fmt.Println(reflect.TypeOf(decode))
-	// ctx.DecodePlugins[*info.(*string)] = decode.(func(string) (interface{}, error))
-
-	// all_plugins, err := filepath.Glob("plugins/*.so")
-	// if err != nil {
-	//     panic(err)
-	// }
+	ctx.InitBackends()
 
 	return &ctx
+}
+
+// InitBackends func
+func (ctx *Context) InitBackends() {
+	for _, storage := range ctx.Owner.StoragePrefList {
+		var err error
+		switch storage {
+		case "rethinkdb":
+			if ctx.RethinkDB.URI != "" && ctx.RethinkDB.DB != "" && ctx.RethinkDB.Collection != "" {
+				ctx.reSession, err = re.Connect(re.ConnectOpts{
+					Address:    ctx.RethinkDB.URI,
+					Addresses:  ctx.RethinkDB.URIs,
+					InitialCap: ctx.RethinkDB.InitialCap,
+					MaxOpen:    ctx.RethinkDB.MaxOpen,
+				})
+				if err != nil {
+					logger.Fatalf("Error connecting to %s %+v", storage, err)
+				}
+				break
+			}
+			logger.Fatalf("%s listed in pipeline but not configured: %+v", storage, ctx.RethinkDB)
+			break
+		case "elastic":
+			if len(ctx.Elastic.Hosts) != 0 && ctx.Elastic.Index != "" {
+				ctx.esClient, err = es.NewClient(es.SetURL(ctx.Elastic.Hosts...))
+				if err != nil {
+					logger.Fatalf("Error connecting to %s %+v", storage, err)
+				}
+				break
+			}
+			logger.Fatalf("%s listed in pipeline but not configured: %+v", storage, ctx.Elastic)
+			break
+		}
+	}
 }
 
 // LoadDecoders func
 func (ctx *Context) LoadDecoders() {
 	// init decoders map
-	ctx.DecodePlugins = make(map[string]func(string) (interface{}, error))
+	ctx.DecodingPlugins = make(map[string]func(string) (interface{}, error))
 	allDecoders, err := filepath.Glob(ctx.Decoders.Path + "/*.so")
 	if err != nil {
 		logger.WithFields(log.Fields{"path": ctx.Decoders.Path}).Fatalf("Can't list decoders dir: %v", err)
@@ -182,10 +165,10 @@ func (ctx *Context) LoadDecoders() {
 		if err != nil {
 			logger.WithFields(log.Fields{"decoder": decoder}).Fatalf("Can't import decoder method: %v", err)
 		}
-		ctx.DecodePlugins[*decoderType.(*string)] = decodeMethod.(func(string) (interface{}, error))
+		ctx.DecodingPlugins[*decoderType.(*string)] = decodeMethod.(func(string) (interface{}, error))
 	}
 
-	for decoderType := range ctx.DecodePlugins {
+	for decoderType := range ctx.DecodingPlugins {
 		logger.Infof("Decoder loaded: %s", decoderType)
 	}
 }
@@ -202,8 +185,8 @@ func (ctx *Context) CompileFilters() /**DevEuiFilters*/ {
 	ctx.CompilledFilters = &df
 }
 
-// ReloadFilters func
-func (ctx *Context) ReloadFilters(config string) {
+// ReloadConfig func
+func (ctx *Context) ReloadConfig(config string) {
 
 	tmp := Context{}
 
@@ -218,6 +201,7 @@ func (ctx *Context) ReloadFilters(config string) {
 	}
 
 	ctx.Filters = tmp.Filters
+	ctx.Inventory = tmp.Inventory
 	ctx.CompileFilters()
 }
 

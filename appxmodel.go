@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -8,6 +9,8 @@ import (
 	"time"
 
 	log "github.com/sirupsen/logrus"
+	re "gopkg.in/gorethink/gorethink.v4"
+	elastic "gopkg.in/olivere/elastic.v5"
 )
 
 // generic types for smooth rethinkdb edges like lack of big int support
@@ -128,7 +131,7 @@ type TracknetUpDfMsg struct {
 	Region     string `json:"region,omitempty"`
 	ArrTime    Time   `json:"ArrTime,omitempty"` // there is no such field in original tcio message, but for convenience' sake we add it
 	SynthTime  bool   `json:"SinthTime,omitempty"`
-	//Payload    map[string]interface{} `json:"payload,omitempty"`
+	//Payload    interface{} `json:"payload,omitempty"`
 }
 
 /*
@@ -290,8 +293,37 @@ type TrackNetMessage struct {
 	*TracknetJoiningMsg `json:"joining,omitempty"`
 }
 
-// Get func
-func (m *TrackNetMessage) Get() map[string]interface{} {
+// GetType func
+func (m *TrackNetMessage) GetType() string {
+	return m.MsgType
+}
+
+// GetDevEui func
+func (m *TrackNetMessage) GetDevEui() string {
+	return m.DevEui
+}
+
+// GetFRMPayload func
+func (m *TrackNetMessage) GetFRMPayload() string {
+	switch m.MsgType {
+	case "updf":
+		if m.TracknetUpDfMsg.FRMPayload != "" {
+			return m.TracknetUpDfMsg.FRMPayload
+		}
+	case "upinfo":
+		if m.TracknetUpInfoMsg.FRMPayload != "" {
+			return m.TracknetUpInfoMsg.FRMPayload
+		}
+	case "dndf":
+		if m.TracknetDnDfMsg.FRMPayload != "" {
+			return m.TracknetDnDfMsg.FRMPayload
+		}
+	}
+	return ""
+}
+
+// GetMessage func
+func (m *TrackNetMessage) GetMessage() map[string]interface{} {
 
 	switch m.MsgType {
 	case "updf":
@@ -538,124 +570,91 @@ func (ctx *Context) SinkQueue(queue []AppxMessage) {
 		}
 
 		if ok := ctx.FilterMessage(&event); ok {
-			msg = event.Get()
+			msg = event.GetMessage()
 			switch event.MsgType {
-			case "updf":
-				//msg["payload"] = ctx.DecodePayload(event.TracknetUpDfMsg.DevEui, event.TracknetUpDfMsg.FRMPayload)
-				msg["payload"], _ = ctx.DecodePlugins["TN-T0004001"](event.TracknetUpDfMsg.FRMPayload)
-			case "upinfo":
 			case "dndf":
+				break
+			case "dntxed":
+				break
+			case "dnacked":
+				break
+			case "joining":
+				break
+			//case "updf":
+			//case "upinfo":
 			default:
+				if event.GetFRMPayload() != "" {
+					payload := ctx.DecodePayload(event.GetDevEui() /*event.TracknetUpDfMsg.FRMPayload*/, event.GetFRMPayload())
+					if payload != nil {
+						msg["payload"] = &payload
+					}
+				}
 			}
-			//b, _ := json.Marshal(event.Get())
-			//fmt.Println(string(b))
 			batch = append(batch, msg)
 		}
 	}
+
 	b, _ := json.Marshal(batch)
 	logger.Debugln(string(b))
 
-	// for _, msg := range queue {
-	// 	if ok := ctx.FilterMessage(msg); ok {
-	// 		var event map[string]interface{}
-	// 		json.Unmarshal(msg.Message, &event)
-
-	// 		// fixing buggy trackcentral time handling and convert epoch to Time obj
-	// 		if _, ok := event["ArrTime"]; ok {
-	// 			event["ArrTime"] = time.Unix(int64(event["ArrTime"].(float64)), 0)
-	// 		} else {
-	// 			event["ArrTime"] = time.Now()
-	// 			event["TimeMissing"] = true
-	// 		}
-	// 		// try to decode, if fail - leave message as is
-	// 		//event["DCDPayload"] = ctx.DecodePayload(event["DevEui"].(string), event["FRMPayload"].(string))
-	// 		batch = append(batch, event)
-	// 	}
-	// }
-
-	//logger.Infof("%d message(s) hit the sink, %d passed to decoders", len(queue), len(batch))
-
-	// for _, storage := range ctx.Owner.StoragePrefList {
-	// 	switch storage {
-	// 	case "rethinkdb":
-	// 		//go ctx.rethinkSink(batch)
-	// 		break
-	// 	case "elastic":
-	// 		break
-	// 	case "mqtt":
-	// 		break
-	// 	case "mongo":
-	// 		break
-	// 	default:
-	// 		logger.Fatalf("Unknown storage driver in config %s", storage)
-	// 	}
-	// }
-
-}
-
-/*
-func (ctx *Context) rethinkSink(queue []AppxMessage) {
-	//var test UpDfTracknet
-	var upinfos []TracknetUpInfoElement
-	var batch []interface{}
-	ctx.CheckRethinkAlive()
-	r := re.DB(ctx.RethinkDB.DB).Table(ctx.RethinkDB.Collection)
-	for idx, msg := range queue {
-		var event map[string]interface{}
-		if ok := ctx.FilterMessage(msg); ok {
-			json.Unmarshal(msg.Message, &event)
-			logger.Debugf("%v, %v=>%v <%+v>", idx, msg.AppxID, msg.AppxURL, event)
-			if _, ok := event["ArrTime"]; ok {
-				event["ArrTime"] = time.Unix(int64(event["ArrTime"].(float64)), 0)
-			} else {
-				event["ArrTime"] = time.Now()
-				event["TimeMissing"] = true
-			}
-			event["DCDPayload"] = ctx.DecodePayload(event["DevEui"].(string), event["FRMPayload"].(string))
-			// ugly tracknet/rethinkdb/nodejs biginteger fix
-			if _, ok := event["upinfo"]; ok {
-				for _, upinfo := range event["upinfo"].([]interface{}) {
-					tmpb, err := json.Marshal(upinfo)
-					if err != nil {
-						logger.Panic(err)
-					}
-
-					var tmp TracknetUpInfoElement
-					err = json.Unmarshal(tmpb, &tmp)
-					if err != nil {
-						logger.Panic(err)
-					}
-					tmp.RouterIDStr = fmt.Sprint(tmp.RouterID)
-					upinfos = append(upinfos, tmp)
-					logger.Debugf("rid-int: %d, rid-str: %s, rssi: %+v", tmp.RouterID, tmp.RouterIDStr, tmp.RSSI)
-				}
-				event["upinfo"] = upinfos
-			}
-			batch = append(batch, event)
+	for _, storage := range ctx.Owner.StoragePrefList {
+		switch storage {
+		case "rethinkdb":
+			ctx.rethinkSink(&batch)
+		case "elastic":
+			ctx.elasticSink(&batch)
+		case "mqtt":
+			break
+		case "mongo":
+			break
+		default:
+			logger.Fatalf("Unknown storage driver [%s] in config", storage)
 		}
 	}
+}
+
+func (ctx *Context) rethinkSink(batch *[]interface{}) {
+
+	ctx.CheckRethinkAlive()
+	r := re.DB(ctx.RethinkDB.DB).Table(ctx.RethinkDB.Collection)
 	_, err := r.Insert(batch).RunWrite(ctx.reSession)
 	if err != nil {
-		log.Warn("error insert to db")
+		logger.Error("error insert to db")
 	}
 }
-*/
+
+func (ctx *Context) elasticSink(batch *[]interface{}) {
+
+	bulkRequest := ctx.esClient.Bulk()
+	for _, each := range *batch {
+		//fmt.Println(each)
+		//id := uuid.NewV3(uuid.NamespaceURL, ctx.AppName)
+		req := elastic.NewBulkIndexRequest().Index(time.Now().Format(ctx.Elastic.Index)).Type("logs"). /*.Id(id.String())*/ Doc(each)
+		bulkRequest = bulkRequest.Add(req)
+	}
+
+	_, err := bulkRequest.Do(context.Background())
+	if err != nil {
+		logger.Errorf("ElasticSearch Do request error: %v", err)
+	}
+}
 
 // DecodePayload func
 func (ctx *Context) DecodePayload(deveui string, payload string) interface{} {
 	if devType, ok := ctx.Inventory[deveui]; ok {
-		switch devType {
-		case "TN-T0004001":
-			payload, err := DecodeTNGps(payload)
+		if decoder, ok := ctx.DecodingPlugins[devType]; ok {
+			payload, err := decoder(payload)
 			if err != nil {
-				logger.WithFields(log.Fields{"DevEui": deveui, "type": devType, "payload": payload}).Errorf("Error decoding %+v", err)
+				logger.WithFields(log.Fields{"DevEui": deveui, "type": devType, "payload": payload}).Errorln("Error decoding")
 			}
 			return payload
-		default:
-			return nil
-		}
+		} /*else {*/
+		logger.WithFields(log.Fields{"DevEui": deveui, "type": devType, "payload": payload}).Errorln("Decored not found")
+		//}
 	} else {
-		logger.WithFields(log.Fields{"DevEui": deveui, "payload": payload}).Errorln("Device not listed in inventory")
+		if len(ctx.Inventory) > 0 {
+			logger.WithFields(log.Fields{"DevEui": deveui, "payload": payload}).Errorln("Device not listed in inventory")
+		}
 	}
 	return nil
 }

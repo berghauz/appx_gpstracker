@@ -29,6 +29,7 @@ func main() {
 
 	ctx := CreateContext(*confFile)
 	fmt.Printf("%s %s\nGIT Commit Hash: %s\nBuild Time: %s\n\n", ctx.AppName, version, githash, buildstamp)
+	ctx.LoadDecoders()
 
 	appxMessage := make(chan AppxMessage, ctx.Owner.QueueFlushCount*3)
 
@@ -54,7 +55,7 @@ func main() {
 			select {
 			case <-sighup:
 				logger.Infoln("Reloading filters...")
-				ctx.ReloadFilters(*confFile)
+				ctx.ReloadConfig(*confFile)
 				logger.Infof("Reloading filters done. New is %+v", ctx.Filters)
 			}
 		}

@@ -1,17 +1,24 @@
 # appx_gpstracker (WIP)
-Generic LoRa application to consume TrackNet LNS events
+Generic LoRa application to consume and store TrackNet LNS events
 
 ## Features
 * Network outages/disconnects tolerance
 * Support white list filters by DevEui and MsgType
 * Support regexp in white list filters
-* Support filters hot reloading (SIGHUP)
+* Support filters and inventory hot reloading (SIGHUP)
 * Instrumented with Prometheus
 * Both ws and secured wss supported
 * Dynamic TCIO autoconfiguration support
+* Pluggable decoders support
+* Backend storage: RethinkDB and ElasticSearch
+* big ints (>53bits) stored as strings
+* MQTT as backend remote reciever
+* Backend chaining
 
 ## ToDo's
 * Track last FCntUp/Down and restart fetching from last state
+* etcd/zookeeper support
+* MongoDB support
 
 ## Config example
 ```yaml
