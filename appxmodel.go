@@ -339,6 +339,30 @@ func (m *TrackNetMessage) GetMessage() map[string]interface{} {
 			m.TracknetUpInfoMsg.SynthTime = true
 		}
 		return StructToMap(m.TracknetUpInfoMsg)
+	case "dndf":
+		if m.TracknetDnDfMsg.ArrTime.Unix() < 0 {
+			m.TracknetDnDfMsg.ArrTime.SetDefault()
+			m.TracknetDnDfMsg.SynthTime = true
+		}
+		return StructToMap(m.TracknetDnDfMsg)
+	case "dntxed":
+		if m.TracknetDnTxedMsg.ArrTime.Unix() < 0 {
+			m.TracknetDnTxedMsg.ArrTime.SetDefault()
+			m.TracknetDnTxedMsg.SynthTime = true
+		}
+		return StructToMap(m.TracknetDnTxedMsg)
+	case "dnacked":
+		if m.TracknetDnAckedMsg.ArrTime.Unix() < 0 {
+			m.TracknetDnAckedMsg.ArrTime.SetDefault()
+			m.TracknetDnAckedMsg.SynthTime = true
+		}
+		return StructToMap(m.TracknetDnAckedMsg)
+	case "joining":
+		if m.TracknetJoiningMsg.ArrTime.Unix() < 0 {
+			m.TracknetJoiningMsg.ArrTime.SetDefault()
+			m.TracknetJoiningMsg.SynthTime = true
+		}
+		return StructToMap(m.TracknetJoiningMsg)
 	}
 	return nil
 }
@@ -400,7 +424,6 @@ func (m *TrackNetMessage) UnmarshalJSON(data []byte) error {
 		m.TracknetUpDfMsg = &tmpMsg
 		m.MsgType = temp.MsgType
 		m.DevEui = tmpMsg.DevEui
-		break
 	case "upinfo":
 		var tmpMsg TracknetUpInfoMsg
 		if err := json.Unmarshal(data, &tmpMsg); err != nil {
@@ -409,7 +432,38 @@ func (m *TrackNetMessage) UnmarshalJSON(data []byte) error {
 		m.TracknetUpInfoMsg = &tmpMsg
 		m.MsgType = temp.MsgType
 		m.DevEui = tmpMsg.DevEui
-		break
+	case "dndf":
+		var tmpMsg TracknetDnDfMsg
+		if err := json.Unmarshal(data, &tmpMsg); err != nil {
+			return err
+		}
+		m.TracknetDnDfMsg = &tmpMsg
+		m.MsgType = temp.MsgType
+		m.DevEui = tmpMsg.DevEui
+	case "dntxed":
+		var tmpMsg TracknetDnTxedMsg
+		if err := json.Unmarshal(data, &tmpMsg); err != nil {
+			return err
+		}
+		m.TracknetDnTxedMsg = &tmpMsg
+		m.MsgType = temp.MsgType
+		m.DevEui = tmpMsg.DevEui
+	case "dnacked":
+		var tmpMsg TracknetDnAckedMsg
+		if err := json.Unmarshal(data, &tmpMsg); err != nil {
+			return err
+		}
+		m.TracknetDnAckedMsg = &tmpMsg
+		m.MsgType = temp.MsgType
+		//m.DevEui = tmpMsg.DevEui
+	case "joining":
+		var tmpMsg TracknetJoiningMsg
+		if err := json.Unmarshal(data, &tmpMsg); err != nil {
+			return err
+		}
+		m.TracknetJoiningMsg = &tmpMsg
+		m.MsgType = temp.MsgType
+		m.DevEui = tmpMsg.DevEui
 	default:
 		return fmt.Errorf("Unknown tracknet message type: %s", temp.MsgType)
 	}
@@ -452,7 +506,7 @@ func (ctx *Context) FilterMessage(message *TrackNetMessage) bool {
 			}
 		}
 	}
-	logger.Infof("Dropped %s from %s", message.MsgType, message.DevEui)
+	logger.Debugf("Dropped %s from %s", message.MsgType, message.DevEui)
 	return false
 }
 
@@ -594,21 +648,23 @@ func (ctx *Context) SinkQueue(queue []AppxMessage) {
 		}
 	}
 
-	b, _ := json.Marshal(batch)
-	logger.Debugln(string(b))
+	if len(batch) > 0 {
+		b, _ := json.Marshal(batch)
+		logger.Debugln(string(b))
 
-	for _, storage := range ctx.Owner.StoragePrefList {
-		switch storage {
-		case "rethinkdb":
-			ctx.rethinkSink(&batch)
-		case "elastic":
-			ctx.elasticSink(&batch)
-		case "mqtt":
-			break
-		case "mongo":
-			break
-		default:
-			logger.Fatalf("Unknown storage driver [%s] in config", storage)
+		for _, storage := range ctx.Owner.StoragePrefList {
+			switch storage {
+			case "rethinkdb":
+				ctx.rethinkSink(&batch)
+			case "elastic":
+				ctx.elasticSink(&batch)
+			case "mqtt":
+				break
+			case "mongo":
+				break
+			default:
+				logger.Fatalf("Unknown storage driver [%s] in config", storage)
+			}
 		}
 	}
 }
@@ -645,7 +701,7 @@ func (ctx *Context) DecodePayload(deveui string, payload string) interface{} {
 		if decoder, ok := ctx.DecodingPlugins[devType]; ok {
 			payload, err := decoder(payload)
 			if err != nil {
-				logger.WithFields(log.Fields{"DevEui": deveui, "type": devType, "payload": payload}).Errorln("Error decoding")
+				logger.WithFields(log.Fields{"DevEui": deveui, "type": devType}).Errorf("Error decoding %+v", err)
 			}
 			return payload
 		} /*else {*/
