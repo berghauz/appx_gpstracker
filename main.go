@@ -45,7 +45,8 @@ func main() {
 		pool.CloseAll()
 		close(shutdown)
 		wggs.Wait()
-		ctx.reSession.Close()
+		// !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+		//ctx.reSession.Close()
 		logger.Infoln("Horaaay...")
 		os.Exit(0)
 	}()

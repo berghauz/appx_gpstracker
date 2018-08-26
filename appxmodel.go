@@ -214,7 +214,7 @@ type TracknetUpInfoElement struct {
 // buffered downstream message is deleted or replaced by the application.
 type TracknetDnTxedMsg struct {
 	MsgType string `json:"msgtype"`
-	MsgID   int64  `json:"MsgId"`
+	MsgID   BigInt `json:"MsgId"`
 	UpInfo  struct {
 		RouterID int64 `json:"routerid"`
 	} `json:"upinfo"`
@@ -238,7 +238,7 @@ type TracknetDnTxedMsg struct {
 // buffered downstream message is deleted or replaced by the application.
 type TracknetDnAckedMsg struct {
 	MsgType   string `json:"msgtype"`
-	MsgID     int64  `json:"MsgId"`
+	MsgID     BigInt `json:"MsgId"`
 	ArrTime   Time   `json:"ArrTime,omitempty"` // there is no such field in original tcio message, but for convenience' sake we add it
 	SynthTime bool   `json:"SinthTime,omitempty"`
 }
@@ -260,19 +260,36 @@ type TracknetDnAckedMsg struct {
 // A joining message signals that a device, identified by the DevEui, initiated an over-the-air activation (OTAA) to the network.
 type TracknetJoiningMsg struct {
 	MsgType   string                  `json:"msgtype"`
-	SessID    int32                   `json:"SessID"`
-	NetID     int32                   `json:"NetID"`
+	SessID    BigInt                  `json:"SessID"`
+	NetID     BigInt                  `json:"NetID"`
 	DevEui    string                  `json:"DevEui"`
-	DR        int64                   `json:"DR"`
-	Freq      int64                   `json:"Freq"`
+	DR        uint32                  `json:"DR"`
+	Freq      uint32                  `json:"Freq"`
 	Region    string                  `json:"region"`
 	UpInfos   []TracknetUpInfoElement `json:"upinfo"`
 	ArrTime   Time                    `json:"ArrTime,omitempty"` // there is no such field in original tcio message, but for convenience' sake we add it
 	SynthTime bool                    `json:"SinthTime,omitempty"`
 }
 
-// Payload itself
-//type Payload map[string]interface{}
+/*
+{
+	"msgtype": "joined"
+	"SessID": 	UINT4 // unique session identifier per device
+	"NetID": 	UINT4 // LoRaWAN network identifier
+	"DevEui": 	EUI64 // device identifier
+}
+*/
+
+// TracknetJoinedMsg type
+//A joined message signals that a device completed an over-the-air activation (OTAA) to the network. The device establised a new session with the network.
+type TracknetJoinedMsg struct {
+	MsgType   string `json:"msgtype"`
+	SessID    BigInt `json:"SessID"`
+	NetID     BigInt `json:"NetID"`
+	DevEui    string `json:"DevEui"`
+	ArrTime   Time   `json:"ArrTime,omitempty"` // there is no such field in original tcio message, but for convenience' sake we add it
+	SynthTime bool   `json:"SinthTime,omitempty"`
+}
 
 // AppxMessage type
 type AppxMessage struct {
@@ -291,6 +308,7 @@ type TrackNetMessage struct {
 	*TracknetDnTxedMsg  `json:"dntxed,omitempty"`
 	*TracknetDnAckedMsg `json:"dnacked,omitempty"`
 	*TracknetJoiningMsg `json:"joining,omitempty"`
+	*TracknetJoinedMsg  `json:"joined,omitempty"`
 }
 
 // GetType func
@@ -363,6 +381,12 @@ func (m *TrackNetMessage) GetMessage() map[string]interface{} {
 			m.TracknetJoiningMsg.SynthTime = true
 		}
 		return StructToMap(m.TracknetJoiningMsg)
+	case "joined":
+		if m.TracknetJoinedMsg.ArrTime.Unix() < 0 {
+			m.TracknetJoinedMsg.ArrTime.SetDefault()
+			m.TracknetJoinedMsg.SynthTime = true
+		}
+		return StructToMap(m.TracknetJoinedMsg)
 	}
 	return nil
 }
@@ -462,6 +486,14 @@ func (m *TrackNetMessage) UnmarshalJSON(data []byte) error {
 			return err
 		}
 		m.TracknetJoiningMsg = &tmpMsg
+		m.MsgType = temp.MsgType
+		m.DevEui = tmpMsg.DevEui
+	case "joined":
+		var tmpMsg TracknetJoinedMsg
+		if err := json.Unmarshal(data, &tmpMsg); err != nil {
+			return err
+		}
+		m.TracknetJoinedMsg = &tmpMsg
 		m.MsgType = temp.MsgType
 		m.DevEui = tmpMsg.DevEui
 	default:
@@ -634,7 +666,9 @@ func (ctx *Context) SinkQueue(queue []AppxMessage) {
 				break
 			case "joining":
 				break
-			//case "updf":
+			case "joined":
+				break
+				//case "updf":
 			//case "upinfo":
 			default:
 				if event.GetFRMPayload() != "" {
@@ -659,6 +693,7 @@ func (ctx *Context) SinkQueue(queue []AppxMessage) {
 			case "elastic":
 				ctx.elasticSink(&batch)
 			case "mqtt":
+				ctx.mqttSink(&batch)
 				break
 			case "mongo":
 				break
@@ -695,6 +730,19 @@ func (ctx *Context) elasticSink(batch *[]interface{}) {
 	}
 }
 
+func (ctx *Context) mqttSink(batch *[]interface{}) {
+	events, err := json.Marshal(*batch)
+	if err != nil {
+		log.Errorf("Can't convert batch to json string: %+v", err)
+		return
+	}
+	// for _, event := range *batch {
+	if token := ctx.mqttClient.Publish(ctx.Mqtt.UpTopic, ctx.Mqtt.UpQoS, false, string(events)); token.Wait() && token.Error() != nil {
+		logger.Errorf("Failed to publish to mqtt: %+v", token.Error())
+	}
+	// }
+}
+
 // DecodePayload func
 func (ctx *Context) DecodePayload(deveui string, payload string) interface{} {
 	if devType, ok := ctx.Inventory[deveui]; ok {
@@ -707,11 +755,11 @@ func (ctx *Context) DecodePayload(deveui string, payload string) interface{} {
 		} /*else {*/
 		logger.WithFields(log.Fields{"DevEui": deveui, "type": devType, "payload": payload}).Errorln("Decored not found")
 		//}
-	} else {
+	} /*else {
 		if len(ctx.Inventory) > 0 {
 			logger.WithFields(log.Fields{"DevEui": deveui, "payload": payload}).Errorln("Device not listed in inventory")
 		}
-	}
+	}*/
 	return nil
 }
 

@@ -6,6 +6,8 @@ import (
 	"plugin"
 	"regexp"
 
+	"github.com/eclipse/paho.mqtt.golang"
+
 	"github.com/go-yaml/yaml"
 	log "github.com/sirupsen/logrus"
 	re "gopkg.in/gorethink/gorethink.v4"
@@ -46,6 +48,15 @@ type Context struct {
 		Hosts []string `yaml:"hosts"`
 		Index string   `yaml:"index"`
 	} `yaml:"elastic"`
+	Mqtt struct {
+		Brokers  []string `yaml:"brokers"`
+		User     string   `yaml:"user"`
+		Password string   `yaml:"password"`
+		DnTopic  string   `yaml:"dntopic"`
+		UpTopic  string   `yaml:"uptopic"`
+		UpQoS    byte     `yaml:"upqos"`
+		DnQoS    byte     `yaml:"dnqos"`
+	} `yaml:"mqtt"`
 	Filters struct {
 		DevEui  []string `yaml:"deveui"`
 		MsgType []string `yaml:"msg_type"`
@@ -56,6 +67,7 @@ type Context struct {
 	CompilledFilters *DevEuiFilters
 	reSession        *re.Session
 	esClient         *es.Client
+	mqttClient       mqtt.Client
 }
 
 // TCIOInstance type
@@ -135,6 +147,25 @@ func (ctx *Context) InitBackends() {
 				break
 			}
 			logger.Fatalf("%s listed in pipeline but not configured: %+v", storage, ctx.Elastic)
+			break
+		case "mqtt":
+			var opts *mqtt.ClientOptions
+			if len(ctx.Mqtt.Brokers) != 0 && ctx.Mqtt.User != "" && ctx.Mqtt.Password != "" && ctx.Mqtt.DnTopic != "" && ctx.Mqtt.UpTopic != "" {
+
+				for _, broker := range ctx.Mqtt.Brokers {
+					opts = mqtt.NewClientOptions().AddBroker(broker)
+				}
+				opts.SetUsername(ctx.Mqtt.User)
+				opts.SetPassword(ctx.Mqtt.Password)
+				opts.SetClientID(ctx.AppName)
+				ctx.mqttClient = mqtt.NewClient(opts)
+
+				if token := ctx.mqttClient.Connect(); token.Wait() && token.Error() != nil {
+					logger.Fatalf("Error connecting to %s %+v", storage, token.Error())
+				}
+				break
+			}
+			logger.Fatalf("%s listed in pipeline but not configured: %+v", storage, ctx.Mqtt)
 			break
 		}
 	}
