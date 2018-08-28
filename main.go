@@ -30,6 +30,7 @@ func main() {
 	ctx := CreateContext(*confFile)
 	fmt.Printf("%s %s\nGIT Commit Hash: %s\nBuild Time: %s\n\n", ctx.AppName, version, githash, buildstamp)
 	ctx.LoadDecoders()
+	ctx.InitBackends()
 
 	appxMessage := make(chan AppxMessage, ctx.Owner.QueueFlushCount*3)
 
@@ -92,6 +93,6 @@ func main() {
 	// go ServeConnection(conn)
 
 	http.Handle("/metrics", promhttp.Handler())
-	panic(http.ListenAndServe(":9002", nil))
+	panic(http.ListenAndServe(":"+*promPort, nil))
 	//select {}
 }

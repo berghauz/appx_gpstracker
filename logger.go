@@ -14,6 +14,7 @@ var (
 	keepAlive      *int64
 	backLog        *bool
 	logLevel       *string
+	promPort       *string
 	logger         *logrus.Logger
 )
 
@@ -25,6 +26,7 @@ func init() {
 	respawnTimeout = flag.Int64("R", 10, "respawn interval, sec")
 	backLog = flag.Bool("b", false, "read backloged messages(bugged)")
 	logLevel = flag.String("l", "info", "logging level (info, error, critical, debug...)")
+	promPort = flag.String("p", "9002", "prometheus source port")
 	flag.Parse()
 
 	logger = logrus.New()
@@ -54,5 +56,5 @@ func init() {
 		logger.Out = os.Stdout
 	}
 
-	logger.Println(confFile, logFile)
+	//logger.Println(*confFile, *logFile)
 }

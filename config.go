@@ -117,8 +117,6 @@ func CreateContext(config string) *Context {
 	}
 
 	ctx.CompileFilters()
-	ctx.InitBackends()
-
 	return &ctx
 }
 
@@ -227,7 +225,7 @@ func (ctx *Context) createMqttConnection() {
 				logger.Errorf("Error connecting to mqtt %+v", token.Error())
 				ticker = time.NewTicker(time.Second * 1)
 			} else {
-				logger.Infoln("Mqtt reconnected")
+				//logger.Infoln("Mqtt reconnected")
 				if token := ctx.mqttClient.Subscribe(ctx.Mqtt.DnTopic, ctx.Mqtt.UpQoS, pool.handleMqttDnMessage); token.Wait() && token.Error() != nil {
 					logger.Errorf("Error subscribe to mqtt uptopic %s: %+v", ctx.Mqtt.UpTopic, token.Error())
 				}
