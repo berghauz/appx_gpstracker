@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	mqtt "github.com/eclipse/paho.mqtt.golang"
 	log "github.com/sirupsen/logrus"
 	re "gopkg.in/gorethink/gorethink.v4"
 	elastic "gopkg.in/olivere/elastic.v5"
@@ -77,6 +78,16 @@ type TracknetDnDfMsg struct {
 	//Payload    map[string]interface{} `json:"payload,omitempty"`
 	ArrTime   Time `json:"ArrTime,omitempty"` // there is no such field in original tcio message, but for convenience' sake we add it
 	SynthTime bool `json:"SinthTime,omitempty"`
+}
+
+// TracknetDnDfSpecialMsg type
+type TracknetDnDfSpecialMsg struct {
+	MsgType    string `json:"msgtype,omitempty"`
+	MsgID      int64  `json:"MsgId,omitempty"`
+	FPort      uint8  `json:"FPort,omitempty"`
+	FRMPayload string `json:"FRMPayload,omitempty"`
+	DevEui     string `json:"DevEui,omitempty"`
+	Confirm    bool   `json:"confirm,omitempty"`
 }
 
 /*
@@ -216,7 +227,7 @@ type TracknetDnTxedMsg struct {
 	MsgType string `json:"msgtype"`
 	MsgID   BigInt `json:"MsgId"`
 	UpInfo  struct {
-		RouterID int64 `json:"routerid"`
+		RouterID BigInt `json:"routerid"`
 	} `json:"upinfo"`
 	Confirm   bool   `json:"confirm"`
 	DevEui    string `json:"DevEui"`
@@ -291,11 +302,46 @@ type TracknetJoinedMsg struct {
 	SynthTime bool   `json:"SinthTime,omitempty"`
 }
 
-// AppxMessage type
-type AppxMessage struct {
-	AppxURL string
-	AppxID  string
-	Message []byte
+/*
+undocumented
+{
+	"msgtype":"bad_dndf",
+	"MsgId":123412341523,
+	"FPort":1,
+	"DevEui":"30-36-32-31-5C-37-6E-16",
+	"error":"Not owner of this device"
+}
+*/
+
+// TracknetBadDnDfMsg type
+type TracknetBadDnDfMsg struct {
+	MsgType   string `json:"msgtype"`
+	MsgID     BigInt `json:"MsgId,omitempty"`
+	FPort     uint8  `json:"FPort,omitempty"`
+	DevEui    string `json:"DevEui"`
+	Error     string `json:"error"`
+	ArrTime   Time   `json:"ArrTime,omitempty"` // there is no such field in original tcio message, but for convenience' sake we add it
+	SynthTime bool   `json:"SinthTime,omitempty"`
+}
+
+/*
+undocumented
+{
+	"msgtype":"dnclr",
+	"MsgId":0,
+	"DevEui":"80-7B-85-90-20-00-05-5A",
+	"upid":52150931123728752
+}
+*/
+
+// TracknetDnClrMsg type
+type TracknetDnClrMsg struct {
+	MsgType   string `json:"msgtype"`
+	MsgID     BigInt `json:"MsgId,omitempty"`
+	DevEui    string `json:"DevEui"`
+	UPID      BigInt `json:"upid,omitempty"`
+	ArrTime   Time   `json:"ArrTime,omitempty"` // there is no such field in original tcio message, but for convenience' sake we add it
+	SynthTime bool   `json:"SinthTime,omitempty"`
 }
 
 // TrackNetMessage type
@@ -309,6 +355,15 @@ type TrackNetMessage struct {
 	*TracknetDnAckedMsg `json:"dnacked,omitempty"`
 	*TracknetJoiningMsg `json:"joining,omitempty"`
 	*TracknetJoinedMsg  `json:"joined,omitempty"`
+	*TracknetBadDnDfMsg `json:"bad_dndf,omitempty"`
+	*TracknetDnClrMsg   `json:"dnclr,omitempty"`
+}
+
+// AppxMessage type
+type AppxMessage struct {
+	AppxURL string
+	AppxID  string
+	Message []byte
 }
 
 // GetType func
@@ -387,6 +442,18 @@ func (m *TrackNetMessage) GetMessage() map[string]interface{} {
 			m.TracknetJoinedMsg.SynthTime = true
 		}
 		return StructToMap(m.TracknetJoinedMsg)
+	case "bad_dndf":
+		if m.TracknetBadDnDfMsg.ArrTime.Unix() < 0 {
+			m.TracknetBadDnDfMsg.ArrTime.SetDefault()
+			m.TracknetBadDnDfMsg.SynthTime = true
+		}
+		return StructToMap(m.TracknetBadDnDfMsg)
+	case "dnclr":
+		if m.TracknetDnClrMsg.ArrTime.Unix() < 0 {
+			m.TracknetDnClrMsg.ArrTime.SetDefault()
+			m.TracknetDnClrMsg.SynthTime = true
+		}
+		return StructToMap(m.TracknetDnClrMsg)
 	}
 	return nil
 }
@@ -496,8 +563,24 @@ func (m *TrackNetMessage) UnmarshalJSON(data []byte) error {
 		m.TracknetJoinedMsg = &tmpMsg
 		m.MsgType = temp.MsgType
 		m.DevEui = tmpMsg.DevEui
+	case "bad_dndf":
+		var tmpMsg TracknetBadDnDfMsg
+		if err := json.Unmarshal(data, &tmpMsg); err != nil {
+			return err
+		}
+		m.TracknetBadDnDfMsg = &tmpMsg
+		m.MsgType = temp.MsgType
+		m.DevEui = tmpMsg.DevEui
+	case "dnclr":
+		var tmpMsg TracknetDnClrMsg
+		if err := json.Unmarshal(data, &tmpMsg); err != nil {
+			return err
+		}
+		m.TracknetDnClrMsg = &tmpMsg
+		m.MsgType = temp.MsgType
+		m.DevEui = tmpMsg.DevEui
 	default:
-		return fmt.Errorf("Unknown tracknet message type: %s", temp.MsgType)
+		return fmt.Errorf("Unknown tracknet message type: %s, %+v", temp.MsgType, string(data))
 	}
 
 	return nil
@@ -652,7 +735,7 @@ func (ctx *Context) SinkQueue(queue []AppxMessage) {
 		var event TrackNetMessage
 		err := json.Unmarshal(appxMsg.Message, &event)
 		if err != nil {
-			fmt.Println(err)
+			logger.Errorf("Error unmarshaling upcoming message: %s", err)
 		}
 
 		if ok := ctx.FilterMessage(&event); ok {
@@ -684,7 +767,7 @@ func (ctx *Context) SinkQueue(queue []AppxMessage) {
 
 	if len(batch) > 0 {
 		b, _ := json.Marshal(batch)
-		logger.Debugln(string(b))
+		logger.Debugf("Upcoming message: %s", string(b))
 
 		for _, storage := range ctx.Owner.StoragePrefList {
 			switch storage {
@@ -737,10 +820,38 @@ func (ctx *Context) mqttSink(batch *[]interface{}) {
 		return
 	}
 	// for _, event := range *batch {
+	// if ctx.mqttClient.IsConnected() {
 	if token := ctx.mqttClient.Publish(ctx.Mqtt.UpTopic, ctx.Mqtt.UpQoS, false, string(events)); token.Wait() && token.Error() != nil {
 		logger.Errorf("Failed to publish to mqtt: %+v", token.Error())
 	}
+	// } else {
+	// 	logger.Errorln("Failed to publish to mqtt: client not connected")
 	// }
+	// }
+}
+
+// handleMqttUpMessage
+func (p *connPool) handleMqttDnMessage(c mqtt.Client, m mqtt.Message) {
+	var dnMsg []TracknetDnDfSpecialMsg
+	if err := json.Unmarshal(m.Payload(), &dnMsg); err != nil {
+		logger.Errorf("Can't umrashall incoming dndf %s, %+v", string(m.Payload()), err)
+	}
+	logger.Infoln(dnMsg)
+	for _, msg := range dnMsg {
+		if msg.DevEui == "" || msg.MsgType != "dndf" {
+			logger.Errorf("Incorrect incoming dndf message %s, dropping", string(m.Payload()))
+		} else {
+			var randConn *connection
+			for conn := range p.connections {
+				randConn = conn
+				break
+			}
+			if err := randConn.ws.WriteJSON(msg); err != nil {
+				logger.Errorf("Fail to send dn message %+v", err)
+			}
+		}
+	}
+	//logger.Infof("updn %+v %+v %+v %+v %+v %+v", m.Duplicate(), m.MessageID(), m.Qos(), m.Topic(), m.Retained(), string(m.Payload()))
 }
 
 // DecodePayload func
@@ -762,29 +873,3 @@ func (ctx *Context) DecodePayload(deveui string, payload string) interface{} {
 	}*/
 	return nil
 }
-
-// bigIntWorkaround func
-/*
-func upInfoWorkaround(event map[string]interface{}) {
-
-	var upinfos []TracknetUpInfoElement
-	if _, ok := event["upinfo"]; ok {
-		for _, upinfo := range event["upinfo"].([]interface{}) {
-			tmpb, err := json.Marshal(upinfo)
-			if err != nil {
-				logger.Panic(err)
-			}
-
-			var tmp TracknetUpInfoElement
-			err = json.Unmarshal(tmpb, &tmp)
-			if err != nil {
-				logger.Panic(err)
-			}
-			tmp.RouterIDStr = fmt.Sprint(tmp.RouterID)
-			upinfos = append(upinfos, tmp)
-			logger.Debugf("rid-int: %d, rid-str: %s, rssi: %+v", tmp.RouterID, tmp.RouterIDStr, tmp.RSSI)
-		}
-		event["upinfo"] = upinfos
-	}
-}
-*/

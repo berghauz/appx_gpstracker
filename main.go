@@ -71,7 +71,7 @@ func main() {
 		}
 		c, err := ctx.WsConnect(uri.URI)
 		if err != nil {
-			logger.WithFields(log.Fields{"uri": uri.URI, "crt": ctx.SSL.Certificate, "key": ctx.SSL.PublicKey}).Fatalf("Bootstrap connection loop %+v", err)
+			logger.WithFields(log.Fields{"uri": uri.URI, "crt": ctx.SSL.Certificate, "key": ctx.SSL.PrivateKey}).Fatalf("Bootstrap connection loop %+v", err)
 		}
 
 		wggs.Add(1)

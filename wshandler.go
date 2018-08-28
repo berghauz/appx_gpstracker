@@ -43,9 +43,9 @@ func (ctx *Context) WsConnect(uri string) (*websocket.Conn, error) {
 
 	if u.Scheme == "wss" {
 
-		cer, err := tls.LoadX509KeyPair(ctx.SSL.Certificate, ctx.SSL.PublicKey)
+		cer, err := tls.LoadX509KeyPair(ctx.SSL.Certificate, ctx.SSL.PrivateKey)
 		if err != nil {
-			logger.WithFields(log.Fields{"uri": uri, "crt": ctx.SSL.Certificate, "key": ctx.SSL.PublicKey}).Fatalf("Something goes wrong with SSL certs loading %+v", err)
+			logger.WithFields(log.Fields{"uri": uri, "crt": ctx.SSL.Certificate, "key": ctx.SSL.PrivateKey}).Fatalf("Something goes wrong with SSL certs loading %+v", err)
 		}
 		dialer.TLSClientConfig = &tls.Config{Certificates: []tls.Certificate{cer}}
 	}
@@ -70,7 +70,7 @@ func (ctx *Context) GetAppxs() {
 
 	conn, err := ctx.WsConnect(ctx.Owner.AppxBootstrapURI)
 	if err != nil {
-		logger.WithFields(log.Fields{"uri": ctx.Owner.AppxBootstrapURI, "crt": ctx.SSL.Certificate, "key": ctx.SSL.PublicKey}).Fatalf("GetAppxs WsConnect %+v", err)
+		logger.WithFields(log.Fields{"uri": ctx.Owner.AppxBootstrapURI, "crt": ctx.SSL.Certificate, "key": ctx.SSL.PrivateKey}).Fatalf("GetAppxs WsConnect %+v", err)
 		//logger.Infof("Connected to %s", uri)
 	}
 	defer conn.Close()
@@ -100,6 +100,7 @@ func (conn *connection) ListenAppxNode(appxMessage chan<- AppxMessage) {
 		var appxMsg = AppxMessage{AppxURL: conn.appxURI, AppxID: conn.appxID}
 		if conn.alive {
 			_, appxMsg.Message, err = conn.ws.ReadMessage()
+			//conn.ws.W
 			if err != nil {
 				conn.alive = false
 				return
@@ -109,6 +110,11 @@ func (conn *connection) ListenAppxNode(appxMessage chan<- AppxMessage) {
 			rawMessagesRecieved.WithLabelValues(conn.ctx.AppName, conn.appxID, conn.appxURI).Inc()
 		}
 	}
+}
+
+// WriteAppxNode func
+func (conn *connection) WriteAppxNode(dnMessage chan<- []byte) {
+
 }
 
 func (conn *connection) Respawn(timeout time.Duration, appxMessage chan<- AppxMessage) {
@@ -191,7 +197,6 @@ func (p *connPool) CloseAll() {
 	}
 }
 
-// newConnPool func
 func newConnPool() *connPool {
 	return &connPool{
 		connections: make(map[*connection]bool),
