@@ -75,9 +75,8 @@ type TracknetDnDfMsg struct {
 	FRMPayload string `json:"FRMPayload,omitempty"`
 	DevEui     string `json:"DevEui,omitempty"`
 	Confirm    bool   `json:"confirm,omitempty"`
-	//Payload    map[string]interface{} `json:"payload,omitempty"`
-	ArrTime   Time `json:"ArrTime,omitempty"` // there is no such field in original tcio message, but for convenience' sake we add it
-	SynthTime bool `json:"SinthTime,omitempty"`
+	ArrTime    Time   `json:"ArrTime,omitempty"` // there is no such field in original tcio message, but for convenience' sake we add it
+	SynthTime  bool   `json:"SinthTime,omitempty"`
 }
 
 // TracknetDnDfSpecialMsg type
@@ -142,7 +141,6 @@ type TracknetUpDfMsg struct {
 	Region     string `json:"region,omitempty"`
 	ArrTime    Time   `json:"ArrTime,omitempty"` // there is no such field in original tcio message, but for convenience' sake we add it
 	SynthTime  bool   `json:"SinthTime,omitempty"`
-	//Payload    interface{} `json:"payload,omitempty"`
 }
 
 /*
@@ -836,7 +834,7 @@ func (p *connPool) handleMqttDnMessage(c mqtt.Client, m mqtt.Message) {
 	if err := json.Unmarshal(m.Payload(), &dnMsg); err != nil {
 		logger.Errorf("Can't umrashall incoming dndf %s, %+v", string(m.Payload()), err)
 	}
-	logger.Infoln(dnMsg)
+	logger.Infof("Downcoming message: %+v", dnMsg)
 	for _, msg := range dnMsg {
 		if msg.DevEui == "" || msg.MsgType != "dndf" {
 			logger.Errorf("Incorrect incoming dndf message %s, dropping", string(m.Payload()))

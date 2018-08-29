@@ -72,6 +72,7 @@ type Context struct {
 	reSession        *re.Session
 	esClient         *es.Client
 	mqttClient       mqtt.Client
+	mqttOptions      *mqtt.ClientOptions
 }
 
 // TCIOInstance type
@@ -152,34 +153,34 @@ func (ctx *Context) InitBackends() {
 			break
 		case "mqtt":
 			if len(ctx.Mqtt.Brokers) != 0 && ctx.Mqtt.User != "" && ctx.Mqtt.Password != "" && ctx.Mqtt.DnTopic != "" && ctx.Mqtt.UpTopic != "" {
-				ctx.createMqttConnection()
-				// for _, broker := range ctx.Mqtt.Brokers {
-				// 	opts = mqtt.NewClientOptions().AddBroker(broker)
-				// }
+				for _, broker := range ctx.Mqtt.Brokers {
+					ctx.mqttOptions = mqtt.NewClientOptions().AddBroker(broker)
+				}
 
-				// cer, err := tls.LoadX509KeyPair(ctx.Mqtt.Certificate, ctx.Mqtt.PrivateKey)
-				// if err != nil {
-				// 	logger.Fatalf("Something goes wrong with MQTT SSL certs loading %+v", err)
-				// }
+				cer, err := tls.LoadX509KeyPair(ctx.Mqtt.Certificate, ctx.Mqtt.PrivateKey)
+				if err != nil {
+					logger.Fatalf("Something goes wrong with MQTT SSL certs loading %+v", err)
+				}
 
-				// opts.SetUsername(ctx.Mqtt.User)
-				// opts.SetPassword(ctx.Mqtt.Password)
-				// opts.SetClientID(ctx.AppName)
-				// opts.SetConnectTimeout(time.Second * 3)
-				// opts.SetTLSConfig(&tls.Config{Certificates: []tls.Certificate{cer}, InsecureSkipVerify: true})
-				// opts.SetConnectionLostHandler(func(c mqtt.Client, err error) {
-				// 	logger.Errorln("Mqtt disconnected, trying to reconnect...")
-				// 	ctx.createMqttConnection()
-				// })
-				// ctx.mqttClient = mqtt.NewClient(opts)
+				ctx.mqttOptions.SetUsername(ctx.Mqtt.User)
+				ctx.mqttOptions.SetPassword(ctx.Mqtt.Password)
+				ctx.mqttOptions.SetClientID(ctx.AppName)
+				ctx.mqttOptions.SetConnectTimeout(time.Second * 3)
+				ctx.mqttOptions.SetTLSConfig(&tls.Config{Certificates: []tls.Certificate{cer}, InsecureSkipVerify: true})
+				ctx.mqttOptions.SetConnectionLostHandler(func(c mqtt.Client, err error) {
+					logger.Errorln("Mqtt disconnected, trying to reconnect...")
+					ctx.reconnectMqtt()
+				})
 
-				// if token := ctx.mqttClient.Connect(); token.Wait() && token.Error() != nil {
-				// 	logger.Fatalf("Error connecting to %s %+v", storage, token.Error())
-				// }
+				ctx.mqttClient = mqtt.NewClient(ctx.mqttOptions)
 
-				// if token := ctx.mqttClient.Subscribe(ctx.Mqtt.DnTopic, ctx.Mqtt.UpQoS, pool.handleMqttDnMessage); token.Wait() && token.Error() != nil {
-				// 	logger.Fatalf("Error subscribe to mqtt uptopic %s: %+v", ctx.Mqtt.UpTopic, token.Error())
-				// }
+				if token := ctx.mqttClient.Connect(); token.Wait() && token.Error() != nil {
+					logger.Fatalf("Error connecting to %s %+v", storage, token.Error())
+				}
+
+				if token := ctx.mqttClient.Subscribe(ctx.Mqtt.DnTopic, ctx.Mqtt.UpQoS, pool.handleMqttDnMessage); token.Wait() && token.Error() != nil {
+					logger.Fatalf("Error subscribe to mqtt uptopic %s: %+v", ctx.Mqtt.UpTopic, token.Error())
+				}
 				break
 			}
 			logger.Fatalf("%s listed in pipeline but not configured: %+v", storage, ctx.Mqtt)
@@ -189,52 +190,82 @@ func (ctx *Context) InitBackends() {
 }
 
 // should make a unifie function rather than use code duplication
-func (ctx *Context) createMqttConnection() {
-	ticker := time.NewTicker(time.Second * 1)
-	// if ctx.mqttClient.IsConnected() {
-	// 	ctx.mqttClient.Disconnect(1000)
-	// }
+func (ctx *Context) reconnectMqtt() {
+
+	ticker := time.NewTicker(time.Second * 3)
+	if ctx.mqttClient.IsConnected() {
+		ctx.mqttClient.Disconnect(1000)
+	}
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ticker.C:
-			var opts *mqtt.ClientOptions
-			for _, broker := range ctx.Mqtt.Brokers {
-				opts = mqtt.NewClientOptions().AddBroker(broker)
-			}
-
-			/// ADD SSL AUTODETECT
-			cer, err := tls.LoadX509KeyPair(ctx.Mqtt.Certificate, ctx.Mqtt.PrivateKey)
-			if err != nil {
-				logger.Fatalf("Something goes wrong with MQTT SSL certs loading %+v", err)
-			}
-
-			opts.SetUsername(ctx.Mqtt.User)
-			opts.SetPassword(ctx.Mqtt.Password)
-			opts.SetClientID(ctx.AppName)
-			opts.SetConnectTimeout(time.Second * 3)
-			opts.SetTLSConfig(&tls.Config{Certificates: []tls.Certificate{cer}, InsecureSkipVerify: true})
-			opts.SetConnectionLostHandler(func(c mqtt.Client, err error) {
-				logger.Errorln("Mqtt disconnected, trying to reconnect...")
-				ctx.createMqttConnection()
-			})
-			ctx.mqttClient = mqtt.NewClient(opts)
+			logger.Infoln("Trying reconnect to MQTT...")
+			ctx.mqttClient = mqtt.NewClient(ctx.mqttOptions)
 
 			if token := ctx.mqttClient.Connect(); token.Wait() && token.Error() != nil {
 				logger.Errorf("Error connecting to mqtt %+v", token.Error())
-				ticker = time.NewTicker(time.Second * 1)
+				ticker = time.NewTicker(time.Second * 3)
 			} else {
-				//logger.Infoln("Mqtt reconnected")
 				if token := ctx.mqttClient.Subscribe(ctx.Mqtt.DnTopic, ctx.Mqtt.UpQoS, pool.handleMqttDnMessage); token.Wait() && token.Error() != nil {
 					logger.Errorf("Error subscribe to mqtt uptopic %s: %+v", ctx.Mqtt.UpTopic, token.Error())
 				}
 				ticker.Stop()
+				logger.Infoln("Mqtt reconnected")
 				return
 			}
 		}
 	}
 }
+
+// func (ctx *Context) reconnectMqtt() {
+// 	ticker := time.NewTicker(time.Second * 3)
+// 	if ctx.mqttClient.IsConnected() {
+// 		ctx.mqttClient.Disconnect(1000)
+// 	}
+// 	defer ticker.Stop()
+
+// 	for {
+// 		select {
+// 		case <-ticker.C:
+// 			var opts *mqtt.ClientOptions
+// 			for _, broker := range ctx.Mqtt.Brokers {
+// 				opts = mqtt.NewClientOptions().AddBroker(broker)
+// 			}
+
+// 			/// ADD SSL AUTODETECT
+// 			cer, err := tls.LoadX509KeyPair(ctx.Mqtt.Certificate, ctx.Mqtt.PrivateKey)
+// 			if err != nil {
+// 				logger.Fatalf("Something goes wrong with MQTT SSL certs loading %+v", err)
+// 			}
+
+// 			opts.SetUsername(ctx.Mqtt.User)
+// 			opts.SetPassword(ctx.Mqtt.Password)
+// 			opts.SetClientID(ctx.AppName)
+// 			opts.SetConnectTimeout(time.Second * 3)
+// 			opts.SetTLSConfig(&tls.Config{Certificates: []tls.Certificate{cer}, InsecureSkipVerify: true})
+// 			opts.SetConnectionLostHandler(func(c mqtt.Client, err error) {
+// 				logger.Errorln("Mqtt disconnected, trying to reconnect...")
+// 				ctx.reconnectMqtt()
+// 			})
+
+// 			ctx.mqttClient = mqtt.NewClient(opts)
+
+// 			if token := ctx.mqttClient.Connect(); token.Wait() && token.Error() != nil {
+// 				logger.Errorf("Error connecting to mqtt %+v", token.Error())
+// 				ticker = time.NewTicker(time.Second * 1)
+// 			} else {
+// 				logger.Infoln("Mqtt reconnected")
+// 				if token := ctx.mqttClient.Subscribe(ctx.Mqtt.DnTopic, ctx.Mqtt.UpQoS, pool.handleMqttDnMessage); token.Wait() && token.Error() != nil {
+// 					logger.Errorf("Error subscribe to mqtt uptopic %s: %+v", ctx.Mqtt.UpTopic, token.Error())
+// 				}
+// 				ticker.Stop()
+// 				return
+// 			}
+// 		}
+// 	}
+// }
 
 // LoadDecoders func
 func (ctx *Context) LoadDecoders() {
