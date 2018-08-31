@@ -189,7 +189,6 @@ func (ctx *Context) InitBackends() {
 	}
 }
 
-// should make a unifie function rather than use code duplication
 func (ctx *Context) reconnectMqtt() {
 
 	ticker := time.NewTicker(time.Second * 3)
@@ -206,7 +205,6 @@ func (ctx *Context) reconnectMqtt() {
 
 			if token := ctx.mqttClient.Connect(); token.Wait() && token.Error() != nil {
 				logger.Errorf("Error connecting to mqtt %+v", token.Error())
-				ticker = time.NewTicker(time.Second * 3)
 			} else {
 				if token := ctx.mqttClient.Subscribe(ctx.Mqtt.DnTopic, ctx.Mqtt.UpQoS, pool.handleMqttDnMessage); token.Wait() && token.Error() != nil {
 					logger.Errorf("Error subscribe to mqtt uptopic %s: %+v", ctx.Mqtt.UpTopic, token.Error())

@@ -644,7 +644,6 @@ func (ctx *Context) QueueProcessing(message <-chan AppxMessage, wg *sync.WaitGro
 				go ctx.SinkQueue(buf)
 				buf = nil
 			}
-			flushTicker = time.NewTicker(timeout)
 			break
 		case <-shutdown:
 			if len(buf) > 0 {
@@ -734,8 +733,8 @@ func (ctx *Context) SinkQueue(queue []AppxMessage) {
 		err := json.Unmarshal(appxMsg.Message, &event)
 		if err != nil {
 			logger.Errorf("Error unmarshaling upcoming message: %s", err)
+			continue
 		}
-
 		if ok := ctx.FilterMessage(&event); ok {
 			msg = event.GetMessage()
 			switch event.MsgType {
@@ -748,6 +747,10 @@ func (ctx *Context) SinkQueue(queue []AppxMessage) {
 			case "joining":
 				break
 			case "joined":
+				break
+			case "bad_dndf":
+				break
+			case "dnclr":
 				break
 				//case "updf":
 			//case "upinfo":

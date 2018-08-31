@@ -15,6 +15,7 @@ var (
 	backLog        *bool
 	logLevel       *string
 	promPort       *string
+	cpuprofile     *string
 	logger         *logrus.Logger
 )
 
@@ -27,6 +28,7 @@ func init() {
 	backLog = flag.Bool("b", false, "read backloged messages(bugged)")
 	logLevel = flag.String("l", "info", "logging level (info, error, critical, debug...)")
 	promPort = flag.String("p", "9002", "prometheus source port")
+	cpuprofile = flag.String("cp", "", "write cpu profile to file")
 	flag.Parse()
 
 	logger = logrus.New()

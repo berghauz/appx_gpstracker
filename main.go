@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime/pprof"
 	"sync"
 	"syscall"
 	"time"
@@ -27,6 +28,15 @@ var shutdown = make(chan struct{})
 
 func main() {
 
+	if *cpuprofile != "" {
+		f, err := os.Create(*cpuprofile)
+		if err != nil {
+			log.Fatal(err)
+		}
+		pprof.StartCPUProfile(f)
+		defer pprof.StopCPUProfile()
+	}
+
 	ctx := CreateContext(*confFile)
 	fmt.Printf("%s %s\nGIT Commit Hash: %s\nBuild Time: %s\n\n", ctx.AppName, version, githash, buildstamp)
 	ctx.LoadDecoders()
@@ -48,6 +58,7 @@ func main() {
 		wggs.Wait()
 		// !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 		//ctx.reSession.Close()
+		pprof.StopCPUProfile()
 		logger.Infoln("Horaaay...")
 		os.Exit(0)
 	}()
@@ -88,9 +99,6 @@ func main() {
 	}
 
 	go ctx.QueueProcessing(appxMessage, &wggs)
-
-	// conn := ctx.WsConnect(ctx.Appxs.AppxList[0].URI)
-	// go ServeConnection(conn)
 
 	http.Handle("/metrics", promhttp.Handler())
 	panic(http.ListenAndServe(":"+*promPort, nil))

@@ -100,7 +100,6 @@ func (conn *connection) ListenAppxNode(appxMessage chan<- AppxMessage) {
 		var appxMsg = AppxMessage{AppxURL: conn.appxURI, AppxID: conn.appxID}
 		if conn.alive {
 			_, appxMsg.Message, err = conn.ws.ReadMessage()
-			//conn.ws.W
 			if err != nil {
 				conn.alive = false
 				return

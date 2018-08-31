@@ -19,6 +19,8 @@ Generic LoRa application to consume and store TrackNet LNS events
 * Track last FCntUp/Down and restart fetching from last state
 * etcd/zookeeper support
 * MongoDB support
+* Track last FCntUp/Down and restart mqtt after connection lost
+* list default options with -help command
 
 ## Config example
 ```yaml

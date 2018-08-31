@@ -14,7 +14,7 @@
         {
             "label": "build and run",
             "type": "shell",
-            "command": "go build -x -ldflags \"-X main.version=`git describe --tags --long` -X main.buildstamp=`date '+%Y-%m-%d/%H:%M:%S/%Z'` -X main.githash=`git rev-parse HEAD`\" && ./appx_gpstracker -C ./conf/gpstracker.yaml -l debug",
+            "command": "go build -x -ldflags \"-X main.version=`git describe --tags --long` -X main.buildstamp=`date '+%Y-%m-%d/%H:%M:%S/%Z'` -X main.githash=`git rev-parse HEAD`\" && ./appx_gpstracker -C ./conf/gpstracker.yaml -l debug -cp ./cpuprofile",
             "group": {
                 "kind": "build",
                 "isDefault": true
