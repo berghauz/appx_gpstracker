@@ -41,6 +41,7 @@ func main() {
 	fmt.Printf("%s %s\nGIT Commit Hash: %s\nBuild Time: %s\n\n", ctx.AppName, version, githash, buildstamp)
 	ctx.LoadDecoders()
 	ctx.InitBackends()
+	appxProxyInfo.WithLabelValues(ctx.AppName, ctx.Owner.ID).Set(1)
 
 	appxMessage := make(chan AppxMessage, ctx.Owner.QueueFlushCount*3)
 
@@ -95,6 +96,7 @@ func main() {
 
 		go conn.ListenAppxNode(appxMessage)
 		go conn.keepAlive(time.Duration(*keepAlive)*time.Second, appxMessage)
+		wsConnections.Inc()
 		logger.Infof("Listen on %s, appxid %v in boostrap loop", uri.URI, uri.Appxid)
 	}
 

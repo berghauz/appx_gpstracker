@@ -102,11 +102,12 @@ func (conn *connection) ListenAppxNode(appxMessage chan<- AppxMessage) {
 			_, appxMsg.Message, err = conn.ws.ReadMessage()
 			if err != nil {
 				conn.alive = false
+				//wsConnections.Dec()
 				return
 			}
 			appxMessage <- appxMsg
 			conn.msgRx++
-			rawMessagesRecieved.WithLabelValues(conn.ctx.AppName, conn.appxID, conn.appxURI).Inc()
+			rawMessagesRecieved.WithLabelValues(conn.appxID, conn.appxURI).Inc()
 		}
 	}
 }
@@ -140,6 +141,7 @@ func (conn *connection) Respawn(timeout time.Duration, appxMessage chan<- AppxMe
 				ticker.Stop()
 				go conn.ListenAppxNode(appxMessage)
 				go conn.keepAlive(time.Duration(*keepAlive)*time.Second, appxMessage)
+				wsConnections.Inc()
 				return
 			}
 		}
@@ -150,6 +152,7 @@ func (conn *connection) keepAlive(timeout time.Duration, appxMessage chan<- Appx
 	lastResponse := time.Now()
 	conn.ws.SetPongHandler(func(msg string) error {
 		lastResponse = time.Now()
+		wsPongRcvd.Inc()
 		return nil
 	})
 
@@ -157,13 +160,15 @@ func (conn *connection) keepAlive(timeout time.Duration, appxMessage chan<- Appx
 		for {
 			err := conn.ws.WriteMessage(websocket.PingMessage, []byte("keepalive"))
 			if err != nil {
-				logger.Fatalf("Failed to send ping %+v", err)
+				logger.Errorf("Failed to send ping %+v", err)
 			}
+			wsPingSent.Inc()
 			time.Sleep(timeout / 2)
 			if time.Now().Sub(lastResponse) > timeout {
 				conn.alive = false
 				conn.ws.Close()
 				pool.Delete(conn)
+				wsConnections.Dec()
 				conn.Respawn(time.Duration(*respawnTimeout)*time.Second, appxMessage)
 				break
 			}

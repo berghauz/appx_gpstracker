@@ -610,13 +610,18 @@ func (m *TrackNetMessage) UnmarshalJSON(data []byte) error {
 
 // FilterMessage func
 func (ctx *Context) FilterMessage(message *TrackNetMessage) bool {
+	messagesRecievedByFilter.WithLabelValues(message.MsgType).Inc()
 	for _, allowedType := range ctx.Filters.MsgType {
 		if message.MsgType == allowedType || allowedType == "*" {
 			for _, allowedDeveui := range ctx.CompilledFilters.ReExpressions {
 				if allowedDeveui.MatchString( /*f.DevEui*/ message.DevEui) {
+					messagesPassedFilter.WithLabelValues(message.MsgType).Inc()
 					return true
 				}
+				messagesDroppedByDeveui.WithLabelValues(message.MsgType).Inc()
 			}
+		} else {
+			messagesDroppedByType.WithLabelValues(message.MsgType).Inc()
 		}
 	}
 	logger.Debugf("Dropped %s from %s", message.MsgType, message.DevEui)
@@ -636,12 +641,14 @@ func (ctx *Context) QueueProcessing(message <-chan AppxMessage, wg *sync.WaitGro
 			// think about => instead
 			if len(buf) == ctx.Owner.QueueFlushCount {
 				go ctx.SinkQueue(buf)
+				queueSizeFlushTimes.Inc()
 				buf = nil
 				break
 			}
 		case <-flushTicker.C:
 			if len(buf) > 0 {
 				go ctx.SinkQueue(buf)
+				queueTimeFlushTimes.Inc()
 				buf = nil
 			}
 			break
@@ -700,26 +707,6 @@ func (m *TrackNetMessage) dummyPrint() {
 	// }
 }
 
-// rethinkSink
-/*
-func (ctx *Context) rethinkSink(queue []AppxMessage) {
-	var event interface{}
-	var batch []interface{}
-	r := re.DB("lora").Table("gpstracker")
-	for idx, msg := range queue {
-		if ok := ctx.FilterMessage(msg); ok {
-			json.Unmarshal(msg.Message, &event)
-			batch = append(batch, event)
-			log.Infof("%v, %v=>%v <%+v>", idx, msg.AppxID, msg.AppxURL, event)
-		}
-	}
-	_, err := r.Insert(batch).RunWrite(ctx.reSession)
-	if err != nil {
-		log.Warn("error insert to db")
-	}
-}
-*/
-
 // SinkQueue func
 func (ctx *Context) SinkQueue(queue []AppxMessage) {
 
@@ -756,9 +743,13 @@ func (ctx *Context) SinkQueue(queue []AppxMessage) {
 			//case "upinfo":
 			default:
 				if event.GetFRMPayload() != "" {
+					messagesHittedDecoder.Inc()
 					payload := ctx.DecodePayload(event.GetDevEui() /*event.TracknetUpDfMsg.FRMPayload*/, event.GetFRMPayload())
 					if payload != nil {
 						msg["payload"] = &payload
+						messagesDecoded.Inc()
+					} else {
+						messagesLeavedWithoutDecoding.Inc()
 					}
 				}
 			}
@@ -792,26 +783,36 @@ func (ctx *Context) rethinkSink(batch *[]interface{}) {
 
 	ctx.CheckRethinkAlive()
 	r := re.DB(ctx.RethinkDB.DB).Table(ctx.RethinkDB.Collection)
+	start := time.Now()
 	_, err := r.Insert(batch).RunWrite(ctx.reSession)
 	if err != nil {
-		logger.Error("error insert to db")
+		logger.Errorf("RethinkDB insetrion failed with: %+v", err)
+		rethinkInsertFailed.Add(float64(len(*batch)))
+	} else {
+		messagesStoredInRethinkDb.Add(float64(len(*batch)))
 	}
+	duration := time.Since(start)
+	rethinkPublishHistogram.Observe(float64(duration.Nanoseconds() / int64(time.Millisecond)))
 }
 
 func (ctx *Context) elasticSink(batch *[]interface{}) {
 
 	bulkRequest := ctx.esClient.Bulk()
 	for _, each := range *batch {
-		//fmt.Println(each)
-		//id := uuid.NewV3(uuid.NamespaceURL, ctx.AppName)
 		req := elastic.NewBulkIndexRequest().Index(time.Now().Format(ctx.Elastic.Index)).Type("logs"). /*.Id(id.String())*/ Doc(each)
 		bulkRequest = bulkRequest.Add(req)
 	}
 
+	start := time.Now()
 	_, err := bulkRequest.Do(context.Background())
 	if err != nil {
-		logger.Errorf("ElasticSearch Do request error: %v", err)
+		logger.Errorf("ElasticSearch Do request failed: %v", err)
+		elasticInsertFailed.Add(float64(len(*batch)))
+	} else {
+		messagesStoredInElastic.Add(float64(len(*batch)))
 	}
+	duration := time.Since(start)
+	elasticPublishHistogram.Observe(float64(duration.Nanoseconds() / int64(time.Millisecond)))
 }
 
 func (ctx *Context) mqttSink(batch *[]interface{}) {
@@ -820,15 +821,16 @@ func (ctx *Context) mqttSink(batch *[]interface{}) {
 		log.Errorf("Can't convert batch to json string: %+v", err)
 		return
 	}
-	// for _, event := range *batch {
-	// if ctx.mqttClient.IsConnected() {
+
+	start := time.Now()
 	if token := ctx.mqttClient.Publish(ctx.Mqtt.UpTopic, ctx.Mqtt.UpQoS, false, string(events)); token.Wait() && token.Error() != nil {
-		logger.Errorf("Failed to publish to mqtt: %+v", token.Error())
+		logger.Errorf("Failed to publish to MQTT: %+v", token.Error())
+		mqttPublishFailed.Add(float64(len(*batch)))
+	} else {
+		messagesPublishedToMqtt.Add(float64(len(*batch)))
 	}
-	// } else {
-	// 	logger.Errorln("Failed to publish to mqtt: client not connected")
-	// }
-	// }
+	duration := time.Since(start)
+	mqttPublishHistogram.Observe(float64(duration.Nanoseconds() / int64(time.Millisecond)))
 }
 
 // handleMqttUpMessage
@@ -836,11 +838,14 @@ func (p *connPool) handleMqttDnMessage(c mqtt.Client, m mqtt.Message) {
 	var dnMsg []TracknetDnDfSpecialMsg
 	if err := json.Unmarshal(m.Payload(), &dnMsg); err != nil {
 		logger.Errorf("Can't umrashall incoming dndf %s, %+v", string(m.Payload()), err)
+		messagesDroppedFromMqtt.WithLabelValues("unmarsh_err").Inc()
 	}
+	messagesReceivedFromMqtt.Add(float64(len(dnMsg)))
 	logger.Infof("Downcoming message: %+v", dnMsg)
 	for _, msg := range dnMsg {
 		if msg.DevEui == "" || msg.MsgType != "dndf" {
 			logger.Errorf("Incorrect incoming dndf message %s, dropping", string(m.Payload()))
+			messagesDroppedFromMqtt.WithLabelValues("incorrect_fmt").Inc()
 		} else {
 			var randConn *connection
 			for conn := range p.connections {
@@ -849,6 +854,9 @@ func (p *connPool) handleMqttDnMessage(c mqtt.Client, m mqtt.Message) {
 			}
 			if err := randConn.ws.WriteJSON(msg); err != nil {
 				logger.Errorf("Fail to send dn message %+v", err)
+				messagesDroppedFromMqtt.WithLabelValues("ws_error").Inc()
+			} else {
+				messagesForwardedToTcio.WithLabelValues(randConn.appxID, randConn.appxURI).Inc()
 			}
 		}
 	}
@@ -862,10 +870,12 @@ func (ctx *Context) DecodePayload(deveui string, payload string) interface{} {
 			payload, err := decoder(payload)
 			if err != nil {
 				logger.WithFields(log.Fields{"DevEui": deveui, "type": devType}).Errorf("Error decoding %+v", err)
+				messagesDecodingFailed.Inc()
 			}
 			return payload
 		} /*else {*/
 		logger.WithFields(log.Fields{"DevEui": deveui, "type": devType, "payload": payload}).Errorln("Decored not found")
+		messagesDecoderNotFound.Inc()
 		//}
 	} /*else {
 		if len(ctx.Inventory) > 0 {

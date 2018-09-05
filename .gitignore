@@ -24,6 +24,7 @@
 !.vscode/launch.json
 !.vscode/extensions.json
 wss_client
+cpuprofile
 appx_gpstracker
 *.log
 conf/*
