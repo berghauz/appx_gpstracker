@@ -66,14 +66,14 @@ var messagesStoredInElastic = prometheus.NewCounter(
 
 var messagesPublishedToMqtt = prometheus.NewCounter(
 	prometheus.CounterOpts{
-		Name: "appx_messages_published_mqtt",
-		Help: "Messages pushed to MQTT",
+		Name: "appx_messages_published_to_mqtt",
+		Help: "Messages published to MQTT",
 	},
 )
 
 var messagesReceivedFromMqtt = prometheus.NewCounter(
 	prometheus.CounterOpts{
-		Name: "appx_messages_received_mqtt",
+		Name: "appx_messages_received_from_mqtt",
 		Help: "Messages received from MQTT",
 	},
 )
